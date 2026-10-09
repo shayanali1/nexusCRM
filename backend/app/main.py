@@ -15,9 +15,11 @@ from app.modules.ai.factory import get_ai_provider
 from app.modules.ai.router import router as ai_router
 from app.modules.auth.router import router as auth_router
 from app.modules.automation.router import router as automation_router
+import app.modules.automation.workflows  # Ensure event subscribers are loaded and registered
 from app.modules.companies.router import router as companies_router
 from app.modules.contacts.router import router as contacts_router
 from app.modules.deals.router import router as deals_router
+from app.modules.imports.router import router as imports_router
 from app.modules.leads.router import router as leads_router
 from app.modules.notifications.router import router as notifications_router
 from app.modules.organizations.router import router as organizations_router
@@ -36,6 +38,10 @@ async def lifespan(app: FastAPI):
         await get_redis_pool()
     except Exception as e:
         logger.warning(f"Redis initialization notice: {e}")
+
+    # Register CRM built-in operational event workflows
+    from app.modules.automation.workflows import register_standard_workflows
+    register_standard_workflows()
 
     # Log active AI provider
     ai_provider = get_ai_provider()
@@ -151,6 +157,7 @@ api_v1_router.include_router(deals_router)
 api_v1_router.include_router(tasks_router)
 api_v1_router.include_router(activities_router)
 api_v1_router.include_router(automation_router)
+api_v1_router.include_router(imports_router)
 api_v1_router.include_router(ai_router)
 api_v1_router.include_router(notifications_router)
 api_v1_router.include_router(reports_router)

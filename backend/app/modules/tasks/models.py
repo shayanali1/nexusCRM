@@ -1,5 +1,5 @@
 from enum import Enum
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, JSON, String, Text
 from sqlalchemy.orm import relationship
 from app.core.database import Base, TenantMixin, TimestampMixin, generate_uuid
 
@@ -46,6 +46,7 @@ class Task(Base, TimestampMixin, TenantMixin):
     status = Column(String(50), default=TaskStatus.PENDING.value, nullable=False, index=True)
     due_date = Column(DateTime(timezone=True), nullable=False, index=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
+    extra_metadata = Column(JSON, default=dict, nullable=False)
 
     __table_args__ = (
         Index("ix_tasks_org_due", "organization_id", "due_date"),

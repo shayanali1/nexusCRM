@@ -17,6 +17,7 @@ class ImportJob(Base, TimestampMixin, TenantMixin):
     processed_rows = Column(Integer, default=0, nullable=False)
     successful_rows = Column(Integer, default=0, nullable=False)
     failed_rows = Column(Integer, default=0, nullable=False)
+    duplicate_rows = Column(Integer, default=0, nullable=False)
     errors = Column(JSON, default=list, nullable=False)
 
     # Relationships

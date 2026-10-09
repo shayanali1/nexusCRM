@@ -3,7 +3,7 @@ from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_create_and_convert_lead(client: AsyncClient, auth_headers_owner):
+async def test_create_and_convert_lead(client: AsyncClient, auth_headers_owner, mock_celery_dispatch):
     """Test full customer lifecycle: lead creation -> qualification -> deal conversion."""
     # 1. Create Lead with inline contact & company
     create_payload = {

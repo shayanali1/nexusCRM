@@ -45,4 +45,44 @@ async def log_activity(
     """Log an interaction (call with outcome, email, meeting notes, proposal sent)."""
     repo = ActivityRepository(db, current_user.organization_id)
     activity = await repo.create(req, user_id=current_user.id)
+
+    from app.core.events import CRMEvent, CRMEventType, event_dispatcher
+    from app.modules.activities.models import ActivityType
+
+    await event_dispatcher.dispatch(
+        CRMEvent(
+            event_name=CRMEventType.ACTIVITY_CREATED,
+            organization_id=current_user.organization_id,
+            entity_type="activity",
+            entity_id=activity.id,
+            actor_id=current_user.id,
+            payload={
+                "activity_id": activity.id,
+                "activity_type": activity.activity_type,
+                "deal_id": activity.deal_id,
+                "lead_id": activity.lead_id,
+                "contact_id": activity.contact_id,
+            },
+        ),
+        db,
+    )
+
+    if activity.activity_type == ActivityType.PROPOSAL.value:
+        await event_dispatcher.dispatch(
+            CRMEvent(
+                event_name=CRMEventType.PROPOSAL_SENT,
+                organization_id=current_user.organization_id,
+                entity_type="activity",
+                entity_id=activity.id,
+                actor_id=current_user.id,
+                payload={
+                    "activity_id": activity.id,
+                    "deal_id": activity.deal_id,
+                    "lead_id": activity.lead_id,
+                    "contact_id": activity.contact_id,
+                },
+            ),
+            db,
+        )
+
     return _to_act_resp(activity)

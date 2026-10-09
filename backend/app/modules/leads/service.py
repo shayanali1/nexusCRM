@@ -81,6 +81,23 @@ class LeadService:
         data.contact_id = contact_id
         data.company_id = company_id
         lead = await self.repo.create(data)
+
+        from app.core.events import CRMEvent, CRMEventType, event_dispatcher
+        await event_dispatcher.dispatch(
+            CRMEvent(
+                event_name=CRMEventType.LEAD_CREATED,
+                organization_id=self.org_id,
+                entity_type="lead",
+                entity_id=lead.id,
+                payload={
+                    "lead_id": lead.id,
+                    "title": lead.title,
+                    "assigned_to_id": lead.assigned_to_id,
+                },
+            ),
+            self.db,
+        )
+
         loaded = await self.repo.get_by_id(lead.id)
         return self._to_response(loaded or lead)
 

@@ -6,6 +6,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 # Add backend directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -13,7 +14,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 # Force test configuration
 os.environ["APP_ENV"] = "test"
 os.environ["AI_PROVIDER"] = "mock"
-os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
+os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///file:testdb?mode=memory&cache=shared&uri=true"
 
 from app.core.database import Base, get_db
 from app.core.security import create_access_token, hash_password
@@ -25,8 +26,9 @@ from app.modules.users.models import User
 
 # Test database engine
 test_engine = create_async_engine(
-    "sqlite+aiosqlite:///:memory:",
+    "sqlite+aiosqlite:///file:testdb?mode=memory&cache=shared&uri=true",
     connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
 )
 TestAsyncSessionLocal = async_sessionmaker(
     bind=test_engine,
@@ -144,3 +146,13 @@ def auth_headers_member(test_user_member: User, test_org: Organization) -> Dict[
     """Return authorization headers for Organization A Member."""
     token = create_access_token(test_user_member.id, test_org.id, test_user_member.role)
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def mock_celery_dispatch(monkeypatch):
+    """Mock Celery dispatch boundary in unit tests where appropriate so a live Redis service is not required."""
+    from unittest.mock import MagicMock
+    from app.workers.ai_jobs import process_async_lead_summary
+    mock_delay = MagicMock(return_value=None)
+    monkeypatch.setattr(process_async_lead_summary, "delay", mock_delay)
+    return mock_delay

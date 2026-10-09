@@ -17,7 +17,9 @@ router = APIRouter(prefix="/tasks", tags=["Tasks & Follow-ups"])
 def _to_task_resp(t: Task) -> TaskResponse:
     now = datetime.now(timezone.utc)
     resp = TaskResponse.model_validate(t)
-    resp.is_overdue = (t.due_date < now and t.status != TaskStatus.COMPLETED.value)
+    due_dt = t.due_date if t.due_date.tzinfo else t.due_date.replace(tzinfo=timezone.utc)
+    resp.is_overdue = (due_dt < now and t.status != TaskStatus.COMPLETED.value)
+    resp.extra_metadata = t.extra_metadata or {}
     if t.assigned_to:
         resp.assigned_to_name = t.assigned_to.full_name
     if t.lead:
@@ -37,6 +39,21 @@ async def get_task_metrics(
     """Retrieve follow-up task counts (overdue, due today, upcoming)."""
     repo = TaskRepository(db, current_user.organization_id)
     return await repo.get_metrics()
+
+
+@router.post("/escalate-overdue")
+async def trigger_task_escalation(
+    current_user: User = Depends(require_permission(Permission.TASKS_UPDATE)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Scan and escalate all tasks overdue by >24 hours to URGENT priority."""
+    from app.modules.automation.workflows import escalate_overdue_tasks
+    escalated = await escalate_overdue_tasks(db, current_user.organization_id)
+    return {
+        "success": True,
+        "escalated_count": len(escalated),
+        "tasks": [_to_task_resp(t) for t in escalated],
+    }
 
 
 @router.get("", response_model=List[TaskResponse])

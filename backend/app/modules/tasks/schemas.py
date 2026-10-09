@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 from app.modules.tasks.models import TaskPriority, TaskStatus, TaskType
 
@@ -38,6 +38,7 @@ class TaskResponse(TaskBase):
     created_by_id: Optional[str] = None
     completed_at: Optional[datetime] = None
     is_overdue: bool = False
+    extra_metadata: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
 

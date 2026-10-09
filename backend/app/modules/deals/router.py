@@ -83,8 +83,26 @@ async def update_deal(
     deal = await repo.get_by_id(deal_id)
     if not deal:
         raise NotFoundException("Deal not found.")
+    old_status = deal.status
     updated = await repo.update(deal, req)
     loaded = await repo.get_by_id(updated.id)
+
+    from app.core.events import CRMEvent, CRMEventType, event_dispatcher
+    from app.modules.deals.models import DealStatus
+
+    if updated.status == DealStatus.WON.value and old_status != DealStatus.WON.value:
+        await event_dispatcher.dispatch(
+            CRMEvent(
+                event_name=CRMEventType.DEAL_WON,
+                organization_id=current_user.organization_id,
+                entity_type="deal",
+                entity_id=updated.id,
+                actor_id=current_user.id,
+                payload={"deal_id": updated.id, "title": updated.title, "value": updated.value},
+            ),
+            db,
+        )
+
     return _to_deal_resp(loaded or updated)
 
 
@@ -100,8 +118,51 @@ async def move_deal_stage(
     deal = await repo.get_by_id(deal_id)
     if not deal:
         raise NotFoundException("Deal not found.")
+    old_status = deal.status
     updated = await repo.move_stage(deal, req)
     loaded = await repo.get_by_id(updated.id)
+
+    from app.core.events import CRMEvent, CRMEventType, event_dispatcher
+    from app.modules.deals.models import DealStatus
+
+    await event_dispatcher.dispatch(
+        CRMEvent(
+            event_name=CRMEventType.DEAL_STAGE_CHANGED,
+            organization_id=current_user.organization_id,
+            entity_type="deal",
+            entity_id=updated.id,
+            actor_id=current_user.id,
+            payload={"deal_id": updated.id, "stage_id": updated.stage_id, "status": updated.status},
+        ),
+        db,
+    )
+
+    if loaded and loaded.stage and "proposal" in loaded.stage.name.lower():
+        await event_dispatcher.dispatch(
+            CRMEvent(
+                event_name=CRMEventType.PROPOSAL_SENT,
+                organization_id=current_user.organization_id,
+                entity_type="deal",
+                entity_id=updated.id,
+                actor_id=current_user.id,
+                payload={"deal_id": updated.id, "stage_id": updated.stage_id, "title": updated.title},
+            ),
+            db,
+        )
+
+    if updated.status == DealStatus.WON.value and old_status != DealStatus.WON.value:
+        await event_dispatcher.dispatch(
+            CRMEvent(
+                event_name=CRMEventType.DEAL_WON,
+                organization_id=current_user.organization_id,
+                entity_type="deal",
+                entity_id=updated.id,
+                actor_id=current_user.id,
+                payload={"deal_id": updated.id, "title": updated.title, "value": updated.value},
+            ),
+            db,
+        )
+
     return _to_deal_resp(loaded or updated)
 
 
