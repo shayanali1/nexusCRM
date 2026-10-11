@@ -114,21 +114,6 @@ services:
       backend:
         condition: service_healthy
 
-  minio:
-    image: minio/minio:latest
-    container_name: nexuscrm_minio
-    restart: always
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadminpassword
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio_data:/data
-
 volumes:
   postgres_data:
   redis_data:
-  minio_data:

@@ -151,7 +151,6 @@ Services started:
 * **PostgreSQL**: `localhost:5432`
 * **Redis**: `localhost:6379`
 * **Celery Worker**: Background task executor
-* **MinIO Storage**: `http://localhost:9000` (Console at `http://localhost:9001`)
 
 ### Option B: Local Python Development
 
