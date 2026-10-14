@@ -2,6 +2,8 @@ from typing import List, Optional
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from app.core.exceptions import NotFoundException
+from app.modules.companies.models import Company
 from app.modules.contacts.models import Contact
 from app.modules.contacts.schemas import ContactCreate, ContactUpdate
 
@@ -56,6 +58,11 @@ class ContactRepository:
         return result.scalar_one_or_none()
 
     async def create(self, data: ContactCreate) -> Contact:
+        if data.company_id:
+            c_stmt = select(Company.id).where(Company.id == data.company_id, Company.organization_id == self.org_id)
+            if not (await self.db.execute(c_stmt)).scalar_one_or_none():
+                raise NotFoundException("Company not found.")
+
         contact = Contact(
             organization_id=self.org_id,
             first_name=data.first_name,
@@ -74,7 +81,13 @@ class ContactRepository:
         return contact
 
     async def update(self, contact: Contact, data: ContactUpdate) -> Contact:
-        for field, value in data.model_dump(exclude_unset=True).items():
+        update_data = data.model_dump(exclude_unset=True)
+        if "company_id" in update_data and update_data["company_id"] is not None:
+            c_stmt = select(Company.id).where(Company.id == update_data["company_id"], Company.organization_id == self.org_id)
+            if not (await self.db.execute(c_stmt)).scalar_one_or_none():
+                raise NotFoundException("Company not found.")
+
+        for field, value in update_data.items():
             setattr(contact, field, value)
         await self.db.commit()
         await self.db.refresh(contact)

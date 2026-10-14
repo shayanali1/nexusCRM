@@ -25,6 +25,6 @@ class Company(Base, TimestampMixin, TenantMixin):
 
     # Relationships
     organization = relationship("Organization", back_populates="companies")
-    contacts = relationship("Contact", back_populates="company", cascade="all, delete-orphan")
+    contacts = relationship("Contact", back_populates="company")
     leads = relationship("Lead", back_populates="company")
     deals = relationship("Deal", back_populates="company")
