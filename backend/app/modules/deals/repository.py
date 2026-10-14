@@ -3,9 +3,13 @@ from typing import List, Optional
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from app.core.exceptions import BadRequestException, NotFoundException
+from app.modules.companies.models import Company
+from app.modules.contacts.models import Contact
 from app.modules.deals.models import Deal, DealStatus
 from app.modules.deals.schemas import DealCreate, DealStageMoveRequest, DealUpdate
-from app.modules.pipelines.models import PipelineStage
+from app.modules.pipelines.models import Pipeline, PipelineStage
+from app.modules.users.models import User
 
 
 class DealRepository:
@@ -67,7 +71,69 @@ class DealRepository:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def _validate_relationships(
+        self,
+        pipeline_id: Optional[str] = None,
+        stage_id: Optional[str] = None,
+        contact_id: Optional[str] = None,
+        company_id: Optional[str] = None,
+        assigned_to_id: Optional[str] = None,
+        validate_pipeline_and_stage: bool = False,
+    ) -> None:
+        if validate_pipeline_and_stage:
+            if pipeline_id:
+                p_stmt = select(Pipeline.id).where(
+                    Pipeline.id == pipeline_id,
+                    Pipeline.organization_id == self.org_id,
+                )
+                if not (await self.db.execute(p_stmt)).scalar_one_or_none():
+                    raise NotFoundException("Pipeline not found.")
+
+            if stage_id:
+                s_stmt = select(PipelineStage).where(
+                    PipelineStage.id == stage_id,
+                    PipelineStage.organization_id == self.org_id,
+                )
+                stage = (await self.db.execute(s_stmt)).scalars().first()
+                if not stage:
+                    raise NotFoundException("Pipeline stage not found.")
+                if pipeline_id and stage.pipeline_id != pipeline_id:
+                    raise BadRequestException("Pipeline stage does not belong to the selected pipeline.")
+
+        if contact_id:
+            ct_stmt = select(Contact.id).where(
+                Contact.id == contact_id,
+                Contact.organization_id == self.org_id,
+            )
+            if not (await self.db.execute(ct_stmt)).scalar_one_or_none():
+                raise NotFoundException("Contact not found.")
+
+        if company_id:
+            c_stmt = select(Company.id).where(
+                Company.id == company_id,
+                Company.organization_id == self.org_id,
+            )
+            if not (await self.db.execute(c_stmt)).scalar_one_or_none():
+                raise NotFoundException("Company not found.")
+
+        if assigned_to_id:
+            u_stmt = select(User.id).where(
+                User.id == assigned_to_id,
+                User.organization_id == self.org_id,
+                User.is_active.is_(True),
+            )
+            if not (await self.db.execute(u_stmt)).scalar_one_or_none():
+                raise NotFoundException("User not found.")
+
     async def create(self, data: DealCreate) -> Deal:
+        await self._validate_relationships(
+            pipeline_id=data.pipeline_id,
+            stage_id=data.stage_id,
+            contact_id=data.contact_id,
+            company_id=data.company_id,
+            assigned_to_id=data.assigned_to_id,
+            validate_pipeline_and_stage=True,
+        )
         deal = Deal(
             organization_id=self.org_id,
             pipeline_id=data.pipeline_id,
@@ -90,7 +156,22 @@ class DealRepository:
         return deal
 
     async def update(self, deal: Deal, data: DealUpdate) -> Deal:
-        for field, value in data.model_dump(exclude_unset=True).items():
+        update_dict = data.model_dump(exclude_unset=True)
+
+        target_pipeline_id = update_dict.get("pipeline_id", deal.pipeline_id)
+        target_stage_id = update_dict.get("stage_id", deal.stage_id)
+        validate_pipe_stage = "pipeline_id" in update_dict or "stage_id" in update_dict
+
+        await self._validate_relationships(
+            pipeline_id=target_pipeline_id if validate_pipe_stage else None,
+            stage_id=target_stage_id if validate_pipe_stage else None,
+            contact_id=update_dict.get("contact_id") if "contact_id" in update_dict else None,
+            company_id=update_dict.get("company_id") if "company_id" in update_dict else None,
+            assigned_to_id=update_dict.get("assigned_to_id") if "assigned_to_id" in update_dict else None,
+            validate_pipeline_and_stage=validate_pipe_stage,
+        )
+
+        for field, value in update_dict.items():
             if hasattr(value, "value"):
                 value = value.value
             setattr(deal, field, value)
@@ -106,22 +187,25 @@ class DealRepository:
                     PipelineStage.organization_id == self.org_id,
                 )
             )
-        ).scalar_one_or_none()
+        ).scalars().first()
+        if not stage:
+            raise NotFoundException("Pipeline stage not found.")
+        if stage.pipeline_id != deal.pipeline_id:
+            raise BadRequestException("Pipeline stage does not belong to the selected pipeline.")
 
         deal.stage_id = req.stage_id
-        if stage:
-            deal.win_probability = req.win_probability if req.win_probability is not None else stage.win_probability
-            if stage.is_won:
-                deal.status = DealStatus.WON.value
-                deal.closed_at = datetime.now(timezone.utc)
-            elif stage.is_lost:
-                deal.status = DealStatus.LOST.value
-                deal.closed_at = datetime.now(timezone.utc)
-                if req.lost_reason:
-                    deal.lost_reason = req.lost_reason
-            else:
-                deal.status = DealStatus.OPEN.value
-                deal.closed_at = None
+        deal.win_probability = req.win_probability if req.win_probability is not None else stage.win_probability
+        if stage.is_won:
+            deal.status = DealStatus.WON.value
+            deal.closed_at = datetime.now(timezone.utc)
+        elif stage.is_lost:
+            deal.status = DealStatus.LOST.value
+            deal.closed_at = datetime.now(timezone.utc)
+            if req.lost_reason:
+                deal.lost_reason = req.lost_reason
+        else:
+            deal.status = DealStatus.OPEN.value
+            deal.closed_at = None
 
         if req.status:
             deal.status = req.status.value if hasattr(req.status, "value") else str(req.status)

@@ -390,3 +390,222 @@ async def test_cross_tenant_lead_conversion_injection_prevented(
     final_deals_org_b = (await db_session.execute(select(func.count(Deal.id)).where(Deal.organization_id == org_b_id))).scalar()
     assert final_deals_org_a == initial_deals_org_a
     assert final_deals_org_b == initial_deals_org_b
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_deal_relationship_injection_prevented(
+    client: AsyncClient,
+    test_org: Organization,
+    auth_headers_owner,
+    foreign_org_and_entities,
+    db_session: AsyncSession,
+):
+    """Creating, updating, or moving a Deal with foreign or mismatched references is strictly rejected."""
+    foreign_company_id = foreign_org_and_entities["company_b"].id
+    foreign_contact_id = foreign_org_and_entities["contact_b"].id
+    foreign_pipe_id = foreign_org_and_entities["pipe_b"].id
+    foreign_stage_id = foreign_org_and_entities["stage_b"].id
+    foreign_user_id = foreign_org_and_entities["user_b"].id
+    org_b_id = foreign_org_and_entities["org_b"].id
+
+    # Retrieve Org A default pipeline and stage
+    def_pipe_stmt = select(Pipeline).where(Pipeline.organization_id == test_org.id, Pipeline.is_default.is_(True))
+    default_pipe = (await db_session.execute(def_pipe_stmt)).scalars().first()
+    def_stage_stmt = select(PipelineStage).where(PipelineStage.pipeline_id == default_pipe.id)
+    default_stage = (await db_session.execute(def_stage_stmt)).scalars().first()
+
+    # Create secondary pipeline in Org A for mismatch verification
+    custom_pipe = Pipeline(organization_id=test_org.id, name="Secondary Pipe", is_default=False)
+    db_session.add(custom_pipe)
+    await db_session.flush()
+    custom_stage = PipelineStage(
+        organization_id=test_org.id,
+        pipeline_id=custom_pipe.id,
+        name="Contracting",
+        order=1,
+    )
+    db_session.add(custom_stage)
+    await db_session.commit()
+
+    initial_deals_org_a = (await db_session.execute(select(func.count(Deal.id)).where(Deal.organization_id == test_org.id))).scalar()
+    initial_deals_org_b = (await db_session.execute(select(func.count(Deal.id)).where(Deal.organization_id == org_b_id))).scalar()
+
+    # 1. Reject create with foreign company_id
+    res_comp = await client.post(
+        "/api/v1/deals",
+        json={"title": "Hack Company Deal", "pipeline_id": default_pipe.id, "stage_id": default_stage.id, "company_id": foreign_company_id},
+        headers=auth_headers_owner,
+    )
+    assert res_comp.status_code == 404
+    assert "Company not found" in res_comp.json()["error"]["message"]
+
+    # 2. Reject create with foreign contact_id
+    res_cont = await client.post(
+        "/api/v1/deals",
+        json={"title": "Hack Contact Deal", "pipeline_id": default_pipe.id, "stage_id": default_stage.id, "contact_id": foreign_contact_id},
+        headers=auth_headers_owner,
+    )
+    assert res_cont.status_code == 404
+    assert "Contact not found" in res_cont.json()["error"]["message"]
+
+    # 3. Reject create with foreign pipeline_id
+    res_pipe = await client.post(
+        "/api/v1/deals",
+        json={"title": "Hack Pipe Deal", "pipeline_id": foreign_pipe_id, "stage_id": default_stage.id},
+        headers=auth_headers_owner,
+    )
+    assert res_pipe.status_code == 404
+    assert "Pipeline not found" in res_pipe.json()["error"]["message"]
+
+    # 4. Reject create with foreign stage_id
+    res_stage = await client.post(
+        "/api/v1/deals",
+        json={"title": "Hack Stage Deal", "pipeline_id": default_pipe.id, "stage_id": foreign_stage_id},
+        headers=auth_headers_owner,
+    )
+    assert res_stage.status_code == 404
+    assert "Pipeline stage not found" in res_stage.json()["error"]["message"]
+
+    # 5. Reject create with foreign assigned_to_id
+    res_user = await client.post(
+        "/api/v1/deals",
+        json={"title": "Hack User Deal", "pipeline_id": default_pipe.id, "stage_id": default_stage.id, "assigned_to_id": foreign_user_id},
+        headers=auth_headers_owner,
+    )
+    assert res_user.status_code == 404
+    assert "User not found" in res_user.json()["error"]["message"]
+
+    # 6. Reject create with mismatched pipeline and stage within Org A
+    res_mismatch = await client.post(
+        "/api/v1/deals",
+        json={"title": "Mismatch Deal", "pipeline_id": default_pipe.id, "stage_id": custom_stage.id},
+        headers=auth_headers_owner,
+    )
+    assert res_mismatch.status_code == 400
+    assert "Pipeline stage does not belong to the selected pipeline" in res_mismatch.json()["error"]["message"]
+
+    # 7. Create legitimate deal in Org A
+    res_legit = await client.post(
+        "/api/v1/deals",
+        json={"title": "Valid Alpha Deal", "pipeline_id": default_pipe.id, "stage_id": default_stage.id, "value": 25000.0},
+        headers=auth_headers_owner,
+    )
+    assert res_legit.status_code == 201
+    deal_id = res_legit.json()["id"]
+
+    # 8. Reject patch with foreign relationships
+    res_patch_comp = await client.patch(
+        f"/api/v1/deals/{deal_id}",
+        json={"company_id": foreign_company_id},
+        headers=auth_headers_owner,
+    )
+    assert res_patch_comp.status_code == 404
+    assert "Company not found" in res_patch_comp.json()["error"]["message"]
+
+    res_patch_cont = await client.patch(
+        f"/api/v1/deals/{deal_id}",
+        json={"contact_id": foreign_contact_id},
+        headers=auth_headers_owner,
+    )
+    assert res_patch_cont.status_code == 404
+    assert "Contact not found" in res_patch_cont.json()["error"]["message"]
+
+    res_patch_stage = await client.patch(
+        f"/api/v1/deals/{deal_id}",
+        json={"stage_id": foreign_stage_id},
+        headers=auth_headers_owner,
+    )
+    assert res_patch_stage.status_code == 404
+    assert "Pipeline stage not found" in res_patch_stage.json()["error"]["message"]
+
+    res_patch_user = await client.patch(
+        f"/api/v1/deals/{deal_id}",
+        json={"assigned_to_id": foreign_user_id},
+        headers=auth_headers_owner,
+    )
+    assert res_patch_user.status_code == 404
+    assert "User not found" in res_patch_user.json()["error"]["message"]
+
+    res_patch_mismatch = await client.patch(
+        f"/api/v1/deals/{deal_id}",
+        json={"stage_id": custom_stage.id},
+        headers=auth_headers_owner,
+    )
+    assert res_patch_mismatch.status_code == 400
+    assert "Pipeline stage does not belong to the selected pipeline" in res_patch_mismatch.json()["error"]["message"]
+
+    # 9. Reject move-stage with foreign stage
+    res_move_foreign = await client.post(
+        f"/api/v1/deals/{deal_id}/move-stage",
+        json={"stage_id": foreign_stage_id},
+        headers=auth_headers_owner,
+    )
+    assert res_move_foreign.status_code == 404
+    assert "Pipeline stage not found" in res_move_foreign.json()["error"]["message"]
+
+    # 10. Reject move-stage with mismatched pipeline stage
+    res_move_mismatch = await client.post(
+        f"/api/v1/deals/{deal_id}/move-stage",
+        json={"stage_id": custom_stage.id},
+        headers=auth_headers_owner,
+    )
+    assert res_move_mismatch.status_code == 400
+    assert "Pipeline stage does not belong to the selected pipeline" in res_move_mismatch.json()["error"]["message"]
+
+    # Verify deal in DB remains completely uncorrupted
+    deal_db = (await db_session.execute(select(Deal).where(Deal.id == deal_id))).scalar_one()
+    assert deal_db.pipeline_id == default_pipe.id
+    assert deal_db.stage_id == default_stage.id
+    assert deal_db.company_id is None
+    assert deal_db.contact_id is None
+    assert deal_db.assigned_to_id is None
+
+    # Verify deal counts
+    final_deals_org_a = (await db_session.execute(select(func.count(Deal.id)).where(Deal.organization_id == test_org.id))).scalar()
+    final_deals_org_b = (await db_session.execute(select(func.count(Deal.id)).where(Deal.organization_id == org_b_id))).scalar()
+    assert final_deals_org_a == initial_deals_org_a + 1
+    assert final_deals_org_b == initial_deals_org_b
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_lead_conversion_by_id_prevented(
+    client: AsyncClient,
+    auth_headers_owner,
+    foreign_org_and_entities,
+    db_session: AsyncSession,
+    mock_celery_dispatch,
+):
+    """An Organization A user cannot convert an Organization B lead by ID."""
+    org_b = foreign_org_and_entities["org_b"]
+    lead_b = Lead(
+        organization_id=org_b.id,
+        title="Beta Confidential Lead",
+        status="NEW",
+        estimated_value=85000.0,
+    )
+    db_session.add(lead_b)
+    await db_session.commit()
+    await db_session.refresh(lead_b)
+
+    initial_deals_org_a = (await db_session.execute(select(func.count(Deal.id)).where(Deal.organization_id != org_b.id))).scalar()
+    initial_deals_org_b = (await db_session.execute(select(func.count(Deal.id)).where(Deal.organization_id == org_b.id))).scalar()
+
+    res = await client.post(
+        f"/api/v1/leads/{lead_b.id}/convert",
+        json={"deal_title": "Hostile Hijack Deal"},
+        headers=auth_headers_owner,
+    )
+    assert res.status_code == 404
+    assert "Lead not found" in res.json()["error"]["message"]
+
+    # Verify foreign lead is untouched
+    lead_b_db = (await db_session.execute(select(Lead).where(Lead.id == lead_b.id))).scalar_one()
+    assert lead_b_db.converted_to_deal_id is None
+    assert lead_b_db.converted_at is None
+    assert lead_b_db.status == "NEW"
+
+    # Verify no deals created in either organization
+    final_deals_org_a = (await db_session.execute(select(func.count(Deal.id)).where(Deal.organization_id != org_b.id))).scalar()
+    final_deals_org_b = (await db_session.execute(select(func.count(Deal.id)).where(Deal.organization_id == org_b.id))).scalar()
+    assert final_deals_org_a == initial_deals_org_a
+    assert final_deals_org_b == initial_deals_org_b

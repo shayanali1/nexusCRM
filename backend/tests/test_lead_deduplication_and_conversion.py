@@ -378,3 +378,133 @@ async def test_missing_identity_information_does_not_reject_lead(
 
     lead_count = (await db_session.execute(select(func.count(Lead.id)).where(Lead.organization_id == test_org.id))).scalar()
     assert lead_count == 2
+
+
+@pytest.mark.asyncio
+async def test_duplicate_lead_creation_cross_mode_existing_contact_vs_inline(
+    client: AsyncClient,
+    test_org: Organization,
+    auth_headers_owner: dict,
+    db_session: AsyncSession,
+    mock_celery_dispatch,
+):
+    """An inline lead request matching the normalized email of a lead's linked contact returns HTTP 409."""
+    # 1. Create a Contact in DB
+    contact = Contact(
+        organization_id=test_org.id,
+        first_name="Evelyn",
+        last_name="Cross",
+        email="evelyn.cross@enterprise.io",
+    )
+    db_session.add(contact)
+    await db_session.commit()
+    await db_session.refresh(contact)
+
+    # 2. Create Lead 1 linked to this contact (omitting inline contact_email)
+    res1 = await client.post(
+        "/api/v1/leads",
+        json={"title": "Primary Linked Lead", "contact_id": contact.id},
+        headers=auth_headers_owner,
+    )
+    assert res1.status_code == 201
+    lead1_id = res1.json()["id"]
+
+    # 3. Create Lead 2 inline with the same email (varying case and whitespace) without contact_id
+    res2 = await client.post(
+        "/api/v1/leads",
+        json={
+            "title": "Inbound Web Inquiry",
+            "contact_name": "Evelyn Cross",
+            "contact_email": "  EVELYN.CROSS@enterprise.io  ",
+        },
+        headers=auth_headers_owner,
+    )
+    assert res2.status_code == 409
+    assert res2.json()["error"]["code"] == "CONFLICT"
+    assert "duplicate lead already exists" in res2.json()["error"]["message"]
+    assert res2.json()["error"]["details"]["existing_lead_id"] == lead1_id
+
+    # Verify only 1 lead exists in DB
+    lead_count = (await db_session.execute(select(func.count(Lead.id)).where(Lead.organization_id == test_org.id))).scalar()
+    assert lead_count == 1
+
+
+@pytest.mark.asyncio
+async def test_lead_recreation_allowed_after_lead_deletion(
+    client: AsyncClient,
+    test_org: Organization,
+    auth_headers_owner: dict,
+    db_session: AsyncSession,
+    mock_celery_dispatch,
+):
+    """Deleting a lead permits recreating a new lead with the same contact identity."""
+    # 1. Create initial lead
+    res1 = await client.post(
+        "/api/v1/leads",
+        json={"title": "Temporary Lead", "contact_name": "Ephemeral User", "contact_email": "ephemeral@lead.com"},
+        headers=auth_headers_owner,
+    )
+    assert res1.status_code == 201
+    lead1_id = res1.json()["id"]
+
+    # 2. Delete the lead
+    res_del = await client.delete(f"/api/v1/leads/{lead1_id}", headers=auth_headers_owner)
+    assert res_del.status_code == 204
+
+    # 3. Recreating a lead with the same email must succeed
+    res2 = await client.post(
+        "/api/v1/leads",
+        json={"title": "Recreated Lead", "contact_name": "Ephemeral User", "contact_email": "ephemeral@lead.com"},
+        headers=auth_headers_owner,
+    )
+    assert res2.status_code == 201
+    lead2_id = res2.json()["id"]
+    assert lead2_id != lead1_id
+
+    # Verify database has exactly 1 active lead
+    lead_count = (await db_session.execute(select(func.count(Lead.id)).where(Lead.organization_id == test_org.id))).scalar()
+    assert lead_count == 1
+
+
+@pytest.mark.asyncio
+async def test_lead_conversion_with_null_relations_preserves_contract(
+    client: AsyncClient,
+    test_org: Organization,
+    auth_headers_owner: dict,
+    db_session: AsyncSession,
+    mock_celery_dispatch,
+):
+    """Converting a lead without contact or company succeeds and explicitly returns null relation IDs."""
+    # 1. Create bare lead
+    res = await client.post(
+        "/api/v1/leads",
+        json={"title": "Unlinked Standalone Lead", "estimated_value": 42000.0},
+        headers=auth_headers_owner,
+    )
+    assert res.status_code == 201
+    lead_data = res.json()
+    lead_id = lead_data["id"]
+    assert lead_data["contact_id"] is None
+    assert lead_data["company_id"] is None
+
+    # 2. Convert bare lead to deal
+    conv_res = await client.post(
+        f"/api/v1/leads/{lead_id}/convert",
+        json={"deal_title": "Standalone Deal"},
+        headers=auth_headers_owner,
+    )
+    assert conv_res.status_code == 200
+    conv_data = conv_res.json()
+    assert conv_data["success"] is True
+    assert conv_data["lead_id"] == lead_id
+    assert conv_data["contact_id"] is None
+    assert conv_data["company_id"] is None
+    assert "deal_id" in conv_data
+    deal_id = conv_data["deal_id"]
+
+    # 3. Verify resulting Deal record in DB has null contact_id and company_id
+    deal_db = (await db_session.execute(select(Deal).where(Deal.id == deal_id))).scalar_one()
+    assert deal_db.contact_id is None
+    assert deal_db.company_id is None
+    assert deal_db.title == "Standalone Deal"
+    assert deal_db.value == 42000.0

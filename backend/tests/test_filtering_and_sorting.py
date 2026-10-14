@@ -822,3 +822,65 @@ async def test_pagination_deterministic_on_tied_sort_values(client: AsyncClient,
     p3 = await client.get("/api/v1/leads?sort_by=source&sort_order=asc&limit=1&offset=2", headers=auth_headers_owner)
     assert p3.status_code == 200
     assert [l["title"] for l in p3.json()] == ["Gamma Hospital EHR"]
+
+
+@pytest.mark.asyncio
+async def test_contacts_pagination_deterministic_and_non_overlapping(client: AsyncClient, auth_headers_owner: dict, seed_data):
+    """Contacts pagination returns deterministic, non-overlapping pages across offset increments."""
+    # Sorted by last_name asc: Adams, Brown, Zimmer
+    p1 = await client.get("/api/v1/contacts?sort_by=last_name&sort_order=asc&limit=1&offset=0", headers=auth_headers_owner)
+    assert p1.status_code == 200
+    assert [c["last_name"] for c in p1.json()] == ["Adams"]
+    c1_id = p1.json()[0]["id"]
+
+    p2 = await client.get("/api/v1/contacts?sort_by=last_name&sort_order=asc&limit=1&offset=1", headers=auth_headers_owner)
+    assert p2.status_code == 200
+    assert [c["last_name"] for c in p2.json()] == ["Brown"]
+    c2_id = p2.json()[0]["id"]
+
+    p3 = await client.get("/api/v1/contacts?sort_by=last_name&sort_order=asc&limit=1&offset=2", headers=auth_headers_owner)
+    assert p3.status_code == 200
+    assert [c["last_name"] for c in p3.json()] == ["Zimmer"]
+    c3_id = p3.json()[0]["id"]
+
+    # Assert all returned contact IDs are distinct (non-overlapping)
+    assert len({c1_id, c2_id, c3_id}) == 3
+
+
+@pytest.mark.asyncio
+async def test_companies_pagination_deterministic_and_non_overlapping(client: AsyncClient, auth_headers_owner: dict, seed_data):
+    """Companies pagination returns deterministic, non-overlapping pages across offset increments."""
+    # Sorted by name asc: Alpha Tech, Beta Logistics, Gamma Healthcare
+    p1 = await client.get("/api/v1/companies?sort_by=name&sort_order=asc&limit=1&offset=0", headers=auth_headers_owner)
+    assert p1.status_code == 200
+    assert [c["name"] for c in p1.json()] == ["Alpha Tech"]
+    comp1_id = p1.json()[0]["id"]
+
+    p2 = await client.get("/api/v1/companies?sort_by=name&sort_order=asc&limit=1&offset=1", headers=auth_headers_owner)
+    assert p2.status_code == 200
+    assert [c["name"] for c in p2.json()] == ["Beta Logistics"]
+    comp2_id = p2.json()[0]["id"]
+
+    p3 = await client.get("/api/v1/companies?sort_by=name&sort_order=asc&limit=1&offset=2", headers=auth_headers_owner)
+    assert p3.status_code == 200
+    assert [c["name"] for c in p3.json()] == ["Gamma Healthcare"]
+    comp3_id = p3.json()[0]["id"]
+
+    # Assert all returned company IDs are distinct (non-overlapping)
+    assert len({comp1_id, comp2_id, comp3_id}) == 3
+
+
+@pytest.mark.asyncio
+async def test_pagination_offset_beyond_result_count_returns_empty_list(client: AsyncClient, auth_headers_owner: dict, seed_data):
+    """An offset larger than the total matching count returns HTTP 200 with an empty list."""
+    res_contacts = await client.get("/api/v1/contacts?limit=10&offset=100", headers=auth_headers_owner)
+    assert res_contacts.status_code == 200
+    assert res_contacts.json() == []
+
+    res_companies = await client.get("/api/v1/companies?limit=10&offset=100", headers=auth_headers_owner)
+    assert res_companies.status_code == 200
+    assert res_companies.json() == []
+
+    res_leads = await client.get("/api/v1/leads?limit=10&offset=100", headers=auth_headers_owner)
+    assert res_leads.status_code == 200
+    assert res_leads.json() == []

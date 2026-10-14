@@ -34,6 +34,7 @@ class DealUpdate(BaseModel):
     closed_at: Optional[datetime] = None
     lost_reason: Optional[str] = None
     notes: Optional[str] = None
+    pipeline_id: Optional[str] = None
     stage_id: Optional[str] = None
     contact_id: Optional[str] = None
     company_id: Optional[str] = None
