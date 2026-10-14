@@ -50,6 +50,17 @@ class LeadConvertRequest(BaseModel):
     stage_id: Optional[str] = None
 
 
+class LeadConvertResponse(BaseModel):
+    success: bool = True
+    message: str = "Lead converted successfully to Deal."
+    lead_id: str
+    deal_id: str
+    contact_id: Optional[str] = None
+    company_id: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class LeadResponse(LeadBase):
     id: str
     organization_id: str

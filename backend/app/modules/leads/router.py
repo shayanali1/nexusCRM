@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.permissions import Permission
 from app.modules.auth.dependencies import get_current_user, require_permission
-from app.modules.leads.schemas import LeadConvertRequest, LeadCreate, LeadResponse, LeadUpdate
+from app.modules.leads.schemas import LeadConvertRequest, LeadConvertResponse, LeadCreate, LeadResponse, LeadUpdate
 from app.modules.leads.service import LeadService
 from app.modules.users.models import User
 
@@ -78,13 +78,13 @@ async def update_lead(
     return await service.update_lead(lead_id, req)
 
 
-@router.post("/{lead_id}/convert")
+@router.post("/{lead_id}/convert", response_model=LeadConvertResponse)
 async def convert_lead_to_deal(
     lead_id: str,
     req: LeadConvertRequest,
     current_user: User = Depends(require_permission(Permission.DEALS_CREATE)),
     db: AsyncSession = Depends(get_db),
-):
+) -> LeadConvertResponse:
     """Convert a qualified lead to a deal in the sales pipeline."""
     service = LeadService(db, current_user.organization_id)
     return await service.convert_lead(lead_id, req)

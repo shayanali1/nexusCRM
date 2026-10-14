@@ -1,14 +1,14 @@
 from datetime import datetime, timezone
 from typing import List, Optional
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.exceptions import BadRequestException, ConflictException, NotFoundException
 from app.modules.companies.models import Company
 from app.modules.contacts.models import Contact
 from app.modules.deals.models import Deal, DealStatus
 from app.modules.leads.models import Lead, LeadStatus
 from app.modules.leads.repository import LeadRepository
-from app.modules.leads.schemas import LeadConvertRequest, LeadCreate, LeadResponse, LeadUpdate
+from app.modules.leads.schemas import LeadConvertRequest, LeadConvertResponse, LeadCreate, LeadResponse, LeadUpdate
 from app.modules.pipelines.models import Pipeline, PipelineStage
 from app.modules.users.models import User
 
@@ -73,41 +73,19 @@ class LeadService:
         company_id = data.company_id
         assigned_to_id = data.assigned_to_id
 
-        # 1. Validate or resolve company
+        # 1. Validate company if provided
         if company_id:
             c_stmt = select(Company.id).where(Company.id == company_id, Company.organization_id == self.org_id)
             if not (await self.db.execute(c_stmt)).scalar_one_or_none():
                 raise NotFoundException("Company not found.")
-        elif data.company_name:
-            company = Company(
-                organization_id=self.org_id,
-                name=data.company_name,
-            )
-            self.db.add(company)
-            await self.db.flush()
-            company_id = company.id
 
-        # 2. Validate or resolve contact
+        # 2. Validate contact if explicitly provided
+        contact_obj = None
         if contact_id:
-            ct_stmt = select(Contact.id).where(Contact.id == contact_id, Contact.organization_id == self.org_id)
-            if not (await self.db.execute(ct_stmt)).scalar_one_or_none():
+            ct_stmt = select(Contact).where(Contact.id == contact_id, Contact.organization_id == self.org_id)
+            contact_obj = (await self.db.execute(ct_stmt)).scalars().first()
+            if not contact_obj:
                 raise NotFoundException("Contact not found.")
-        elif data.contact_name:
-            parts = data.contact_name.strip().split(" ", 1)
-            first_name = parts[0]
-            last_name = parts[1] if len(parts) > 1 else ""
-            contact = Contact(
-                organization_id=self.org_id,
-                company_id=company_id,
-                first_name=first_name,
-                last_name=last_name or first_name,
-                email=data.contact_email,
-                phone=data.contact_phone,
-                lead_source=data.source,
-            )
-            self.db.add(contact)
-            await self.db.flush()
-            contact_id = contact.id
 
         # 3. Validate assigned user
         if assigned_to_id:
@@ -118,6 +96,71 @@ class LeadService:
             )
             if not (await self.db.execute(u_stmt)).scalar_one_or_none():
                 raise NotFoundException("User not found.")
+
+        # 4. Conservative, organization-scoped duplicate detection.
+        # Uses reliable identity fields: contact_id, normalized email, or normalized phone.
+        # Matching titles, company names, or contact names alone are not treated as duplicates.
+        clean_email = data.contact_email.strip().lower() if data.contact_email else None
+        clean_phone = data.contact_phone.strip() if data.contact_phone and data.contact_phone.strip() else None
+
+        if contact_obj:
+            if not clean_email and contact_obj.email:
+                clean_email = contact_obj.email.strip().lower()
+            if not clean_phone and contact_obj.phone:
+                clean_phone = contact_obj.phone.strip()
+
+        dup_conditions = []
+        if contact_id:
+            dup_conditions.append(Lead.contact_id == contact_id)
+        if clean_email:
+            dup_conditions.append(func.lower(Contact.email) == clean_email)
+        if clean_phone:
+            dup_conditions.append(Contact.phone == clean_phone)
+
+        if dup_conditions:
+            dup_stmt = (
+                select(Lead.id)
+                .outerjoin(Contact, Lead.contact_id == Contact.id)
+                .where(
+                    Lead.organization_id == self.org_id,
+                    or_(*dup_conditions),
+                )
+                .limit(1)
+            )
+            existing_lead_id = (await self.db.execute(dup_stmt)).scalars().first()
+            if existing_lead_id:
+                raise ConflictException(
+                    "A duplicate lead already exists in your organization for this contact.",
+                    details={"existing_lead_id": existing_lead_id},
+                )
+
+        # 5. Resolve or create inline company (only after duplicate check passes)
+        if not company_id and data.company_name:
+            company = Company(
+                organization_id=self.org_id,
+                name=data.company_name,
+            )
+            self.db.add(company)
+            await self.db.flush()
+            company_id = company.id
+
+        # 6. Resolve or create inline contact (only after duplicate check passes)
+        if not contact_id and data.contact_name:
+            parts = data.contact_name.strip().split(" ", 1)
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else ""
+            contact = Contact(
+                organization_id=self.org_id,
+                company_id=company_id,
+                first_name=first_name,
+                last_name=last_name or first_name,
+                email=clean_email,
+                phone=clean_phone,
+                lead_source=data.source,
+            )
+            self.db.add(contact)
+            await self.db.flush()
+            contact_id = contact.id
 
         data.contact_id = contact_id
         data.company_id = company_id
@@ -173,7 +216,7 @@ class LeadService:
         loaded = await self.repo.get_by_id(updated.id)
         return self._to_response(loaded or updated)
 
-    async def convert_lead(self, lead_id: str, req: LeadConvertRequest) -> dict:
+    async def convert_lead(self, lead_id: str, req: LeadConvertRequest) -> LeadConvertResponse:
         """Convert a qualified lead into an active sales Deal and customer record."""
         lead = await self.repo.get_by_id(lead_id)
         if not lead:
@@ -250,12 +293,14 @@ class LeadService:
         lead.converted_to_deal_id = deal.id
         await self.db.commit()
 
-        return {
-            "success": True,
-            "message": "Lead converted successfully to Deal.",
-            "lead_id": lead.id,
-            "deal_id": deal.id,
-        }
+        return LeadConvertResponse(
+            success=True,
+            message="Lead converted successfully to Deal.",
+            lead_id=lead.id,
+            deal_id=deal.id,
+            contact_id=lead.contact_id,
+            company_id=lead.company_id,
+        )
 
     async def delete_lead(self, lead_id: str) -> None:
         lead = await self.repo.get_by_id(lead_id)
