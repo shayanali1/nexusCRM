@@ -36,10 +36,30 @@ class LeadService:
         status: Optional[str] = None,
         assigned_to_id: Optional[str] = None,
         search: Optional[str] = None,
+        source: Optional[str] = None,
+        priority: Optional[str] = None,
+        min_value: Optional[float] = None,
+        max_value: Optional[float] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[LeadResponse]:
-        leads = await self.repo.list_all(status, assigned_to_id, search, limit, offset)
+        if min_value is not None and max_value is not None and min_value > max_value:
+            raise BadRequestException("min_value cannot be greater than max_value.")
+        leads = await self.repo.list_all(
+            status=status,
+            assigned_to_id=assigned_to_id,
+            search=search,
+            source=source,
+            priority=priority,
+            min_value=min_value,
+            max_value=max_value,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            limit=limit,
+            offset=offset,
+        )
         return [self._to_response(l) for l in leads]
 
     async def get_lead(self, lead_id: str) -> LeadResponse:

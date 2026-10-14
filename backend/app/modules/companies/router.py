@@ -15,6 +15,12 @@ router = APIRouter(prefix="/companies", tags=["Companies"])
 @router.get("", response_model=List[CompanyResponse])
 async def list_companies(
     search: Optional[str] = Query(None, description="Search company name, domain, industry"),
+    industry: Optional[str] = Query(None, description="Filter by company industry"),
+    size: Optional[str] = Query(None, description="Filter by company size"),
+    city: Optional[str] = Query(None, description="Filter by company city"),
+    country: Optional[str] = Query(None, description="Filter by company country"),
+    sort_by: Optional[str] = Query(None, description="Sort field"),
+    sort_order: Optional[str] = Query(None, description="Sort direction ('asc' or 'desc')"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(require_permission(Permission.COMPANIES_READ)),
@@ -22,7 +28,17 @@ async def list_companies(
 ):
     """List all company accounts."""
     repo = CompanyRepository(db, current_user.organization_id)
-    companies = await repo.list_all(search, limit, offset)
+    companies = await repo.list_all(
+        search=search,
+        industry=industry,
+        size=size,
+        city=city,
+        country=country,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        limit=limit,
+        offset=offset,
+    )
     return [CompanyResponse.model_validate(c) for c in companies]
 
 

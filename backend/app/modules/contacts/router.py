@@ -23,7 +23,10 @@ def _to_resp(c: Contact) -> ContactResponse:
 @router.get("", response_model=List[ContactResponse])
 async def list_contacts(
     company_id: Optional[str] = Query(None, description="Filter by company"),
+    lead_source: Optional[str] = Query(None, description="Filter by lead source"),
     search: Optional[str] = Query(None, description="Search contact name, email, phone"),
+    sort_by: Optional[str] = Query(None, description="Field to sort by"),
+    sort_order: Optional[str] = Query(None, description="Sort direction ('asc' or 'desc')"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(require_permission(Permission.CONTACTS_READ)),
@@ -31,7 +34,15 @@ async def list_contacts(
 ):
     """List all customer contacts in the organization."""
     repo = ContactRepository(db, current_user.organization_id)
-    contacts = await repo.list_all(company_id, search, limit, offset)
+    contacts = await repo.list_all(
+        company_id=company_id,
+        lead_source=lead_source,
+        search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        limit=limit,
+        offset=offset,
+    )
     return [_to_resp(c) for c in contacts]
 
 

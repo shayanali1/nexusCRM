@@ -16,6 +16,12 @@ async def list_leads(
     status: Optional[str] = Query(None, description="Filter by status (NEW, CONTACTED, etc.)"),
     assigned_to_id: Optional[str] = Query(None, description="Filter by assigned sales representative"),
     search: Optional[str] = Query(None, description="Search lead title or source"),
+    source: Optional[str] = Query(None, description="Filter by lead source"),
+    priority: Optional[str] = Query(None, description="Filter by lead priority (LOW, MEDIUM, HIGH, URGENT)"),
+    min_value: Optional[float] = Query(None, ge=0.0, description="Minimum estimated value"),
+    max_value: Optional[float] = Query(None, ge=0.0, description="Maximum estimated value"),
+    sort_by: Optional[str] = Query(None, description="Sort field"),
+    sort_order: Optional[str] = Query(None, description="Sort direction ('asc' or 'desc')"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(require_permission(Permission.LEADS_READ)),
@@ -23,7 +29,19 @@ async def list_leads(
 ):
     """List all leads in the organization with filtering and search."""
     service = LeadService(db, current_user.organization_id)
-    return await service.list_leads(status, assigned_to_id, search, limit, offset)
+    return await service.list_leads(
+        status=status,
+        assigned_to_id=assigned_to_id,
+        search=search,
+        source=source,
+        priority=priority,
+        min_value=min_value,
+        max_value=max_value,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post("", response_model=LeadResponse, status_code=status.HTTP_201_CREATED)
