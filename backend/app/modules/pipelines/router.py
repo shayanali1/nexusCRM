@@ -7,7 +7,14 @@ from app.core.permissions import Permission
 from app.modules.auth.dependencies import get_current_user, require_permission
 from app.modules.pipelines.models import Pipeline
 from app.modules.pipelines.repository import PipelineRepository
-from app.modules.pipelines.schemas import PipelineCreate, PipelineResponse, PipelineStageCreate, PipelineStageResponse
+from app.modules.pipelines.schemas import (
+    PipelineCreate,
+    PipelineResponse,
+    PipelineStageCreate,
+    PipelineStageResponse,
+    PipelineStageUpdate,
+    PipelineUpdate,
+)
 from app.modules.users.models import User
 
 router = APIRouter(prefix="/pipelines", tags=["Pipelines"])
@@ -51,6 +58,36 @@ async def get_pipeline(
     return PipelineResponse.model_validate(pipeline)
 
 
+@router.patch("/{pipeline_id}", response_model=PipelineResponse)
+async def update_pipeline(
+    pipeline_id: str,
+    req: PipelineUpdate,
+    current_user: User = Depends(require_permission(Permission.PIPELINES_MANAGE)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a sales pipeline name or default status."""
+    repo = PipelineRepository(db, current_user.organization_id)
+    pipeline = await repo.get_by_id(pipeline_id)
+    if not pipeline:
+        raise NotFoundException("Pipeline not found.")
+    updated = await repo.update(pipeline, req)
+    return PipelineResponse.model_validate(updated)
+
+
+@router.delete("/{pipeline_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_pipeline(
+    pipeline_id: str,
+    current_user: User = Depends(require_permission(Permission.PIPELINES_MANAGE)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an empty, non-default sales pipeline."""
+    repo = PipelineRepository(db, current_user.organization_id)
+    pipeline = await repo.get_by_id(pipeline_id)
+    if not pipeline:
+        raise NotFoundException("Pipeline not found.")
+    await repo.delete(pipeline)
+
+
 @router.post("/{pipeline_id}/stages", response_model=PipelineStageResponse, status_code=status.HTTP_201_CREATED)
 async def add_stage_to_pipeline(
     pipeline_id: str,
@@ -65,3 +102,35 @@ async def add_stage_to_pipeline(
         raise NotFoundException("Pipeline not found.")
     stage = await repo.add_stage(pipeline_id, req)
     return PipelineStageResponse.model_validate(stage)
+
+
+@router.patch("/{pipeline_id}/stages/{stage_id}", response_model=PipelineStageResponse)
+async def update_pipeline_stage(
+    pipeline_id: str,
+    stage_id: str,
+    req: PipelineStageUpdate,
+    current_user: User = Depends(require_permission(Permission.PIPELINES_MANAGE)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a stage's name, order, win probability, or won/lost flag."""
+    repo = PipelineRepository(db, current_user.organization_id)
+    stage = await repo.get_stage_by_id(pipeline_id, stage_id)
+    if not stage:
+        raise NotFoundException("Pipeline stage not found.")
+    updated = await repo.update_stage(stage, req)
+    return PipelineStageResponse.model_validate(updated)
+
+
+@router.delete("/{pipeline_id}/stages/{stage_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_pipeline_stage(
+    pipeline_id: str,
+    stage_id: str,
+    current_user: User = Depends(require_permission(Permission.PIPELINES_MANAGE)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an empty stage from a sales pipeline."""
+    repo = PipelineRepository(db, current_user.organization_id)
+    stage = await repo.get_stage_by_id(pipeline_id, stage_id)
+    if not stage:
+        raise NotFoundException("Pipeline stage not found.")
+    await repo.delete_stage(stage)

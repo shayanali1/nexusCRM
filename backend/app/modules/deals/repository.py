@@ -171,10 +171,64 @@ class DealRepository:
             validate_pipeline_and_stage=validate_pipe_stage,
         )
 
+        status_in_req = "status" in update_dict
+        req_status = None
+        if status_in_req:
+            val = update_dict["status"]
+            req_status = val.value if hasattr(val, "value") else str(val)
+
+        previous_status = str(deal.status)
+        resulting_status = req_status if status_in_req else previous_status
+
+        # Enforce lifecycle status, timestamp, and stage consistency
+        if validate_pipe_stage or status_in_req:
+            stage_obj = (
+                await self.db.execute(
+                    select(PipelineStage).where(
+                        PipelineStage.id == target_stage_id,
+                        PipelineStage.organization_id == self.org_id,
+                    )
+                )
+            ).scalars().first()
+            if stage_obj:
+                if stage_obj.is_won:
+                    if status_in_req and req_status != DealStatus.WON.value:
+                        raise BadRequestException("Cannot assign a non-WON status to a deal on a won stage.")
+                    resulting_status = DealStatus.WON.value
+                elif stage_obj.is_lost:
+                    if status_in_req and req_status != DealStatus.LOST.value:
+                        raise BadRequestException("Cannot assign a non-LOST status to a deal on a lost stage.")
+                    resulting_status = DealStatus.LOST.value
+                else:
+                    if status_in_req and req_status != DealStatus.OPEN.value:
+                        raise BadRequestException("Cannot assign a non-OPEN status to a deal on an open stage.")
+                    if previous_status in (DealStatus.WON.value, DealStatus.LOST.value) or status_in_req:
+                        resulting_status = DealStatus.OPEN.value
+
         for field, value in update_dict.items():
+            if field in ("pipeline_id", "stage_id", "status"):
+                continue
             if hasattr(value, "value"):
                 value = value.value
             setattr(deal, field, value)
+
+        deal.pipeline_id = target_pipeline_id
+        deal.stage_id = target_stage_id
+        deal.status = resulting_status
+
+        if deal.status == DealStatus.WON.value:
+            if not deal.closed_at or previous_status != DealStatus.WON.value:
+                deal.closed_at = datetime.now(timezone.utc)
+            deal.lost_reason = None
+        elif deal.status == DealStatus.LOST.value:
+            if not deal.closed_at or previous_status != DealStatus.LOST.value:
+                deal.closed_at = datetime.now(timezone.utc)
+            if "lost_reason" in update_dict:
+                deal.lost_reason = update_dict["lost_reason"]
+        elif deal.status == DealStatus.OPEN.value:
+            deal.closed_at = None
+            deal.lost_reason = None
+
         await self.db.commit()
         await self.db.refresh(deal)
         return deal
@@ -195,20 +249,33 @@ class DealRepository:
 
         deal.stage_id = req.stage_id
         deal.win_probability = req.win_probability if req.win_probability is not None else stage.win_probability
-        if stage.is_won:
+
+        if req.status:
+            status_val = req.status.value if hasattr(req.status, "value") else str(req.status)
+            if stage.is_won and status_val != DealStatus.WON.value:
+                raise BadRequestException("Cannot assign a non-WON status when moving to a won stage.")
+            if stage.is_lost and status_val != DealStatus.LOST.value:
+                raise BadRequestException("Cannot assign a non-LOST status when moving to a lost stage.")
+            if not stage.is_won and not stage.is_lost and status_val != DealStatus.OPEN.value:
+                raise BadRequestException("Cannot assign a non-OPEN status when moving to an open stage.")
+            deal.status = status_val
+        elif stage.is_won:
             deal.status = DealStatus.WON.value
-            deal.closed_at = datetime.now(timezone.utc)
         elif stage.is_lost:
             deal.status = DealStatus.LOST.value
+        else:
+            deal.status = DealStatus.OPEN.value
+
+        if deal.status == DealStatus.WON.value:
+            deal.closed_at = datetime.now(timezone.utc)
+            deal.lost_reason = None
+        elif deal.status == DealStatus.LOST.value:
             deal.closed_at = datetime.now(timezone.utc)
             if req.lost_reason:
                 deal.lost_reason = req.lost_reason
-        else:
-            deal.status = DealStatus.OPEN.value
+        elif deal.status == DealStatus.OPEN.value:
             deal.closed_at = None
-
-        if req.status:
-            deal.status = req.status.value if hasattr(req.status, "value") else str(req.status)
+            deal.lost_reason = None
 
         await self.db.commit()
         await self.db.refresh(deal)
