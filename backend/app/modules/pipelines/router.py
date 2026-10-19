@@ -1,5 +1,5 @@
-from typing import List
-from fastapi import APIRouter, Depends, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.exceptions import NotFoundException
@@ -8,6 +8,7 @@ from app.modules.auth.dependencies import get_current_user, require_permission
 from app.modules.pipelines.models import Pipeline
 from app.modules.pipelines.repository import PipelineRepository
 from app.modules.pipelines.schemas import (
+    PipelineBoardResponse,
     PipelineCreate,
     PipelineResponse,
     PipelineStageCreate,
@@ -56,6 +57,27 @@ async def get_pipeline(
     if not pipeline:
         raise NotFoundException("Pipeline not found.")
     return PipelineResponse.model_validate(pipeline)
+
+
+@router.get("/{pipeline_id}/board", response_model=PipelineBoardResponse)
+async def get_pipeline_board(
+    pipeline_id: str,
+    assigned_to_id: Optional[str] = Query(None, description="Filter deals by salesperson"),
+    status: Optional[str] = Query(None, description="Filter deals by status (OPEN, WON, LOST)"),
+    search: Optional[str] = Query(None, description="Search deal title"),
+    limit_per_stage: int = Query(50, ge=1, le=200, description="Max deals returned per stage"),
+    current_user: User = Depends(require_permission(Permission.DEALS_READ)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve deals for a selected pipeline grouped by stage with accurate per-stage metrics."""
+    repo = PipelineRepository(db, current_user.organization_id)
+    return await repo.get_board(
+        pipeline_id=pipeline_id,
+        assigned_to_id=assigned_to_id,
+        status=status,
+        search=search,
+        limit_per_stage=limit_per_stage,
+    )
 
 
 @router.patch("/{pipeline_id}", response_model=PipelineResponse)

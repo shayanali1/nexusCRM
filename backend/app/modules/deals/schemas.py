@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.modules.deals.models import DealStatus
 
 
@@ -18,6 +18,13 @@ class DealBase(BaseModel):
     company_id: Optional[str] = None
     assigned_to_id: Optional[str] = None
     custom_fields: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def parse_nullable_value(cls, v: Any) -> float:
+        if v is None:
+            return 0.0
+        return float(v)
 
 
 class DealCreate(DealBase):
@@ -40,6 +47,13 @@ class DealUpdate(BaseModel):
     company_id: Optional[str] = None
     assigned_to_id: Optional[str] = None
     custom_fields: Optional[Dict[str, Any]] = None
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def parse_nullable_value(cls, v: Any) -> Optional[float]:
+        if v is None:
+            return None
+        return float(v)
 
 
 class DealStageMoveRequest(BaseModel):
@@ -64,3 +78,17 @@ class DealResponse(DealBase):
     assigned_to_name: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+def format_deal_response(d: Any) -> DealResponse:
+    """Format a Deal ORM model into DealResponse with loaded relationship names."""
+    resp = DealResponse.model_validate(d)
+    if hasattr(d, "stage") and d.stage:
+        resp.stage_name = d.stage.name
+    if hasattr(d, "contact") and d.contact:
+        resp.contact_name = d.contact.full_name
+    if hasattr(d, "company") and d.company:
+        resp.company_name = d.company.name
+    if hasattr(d, "assigned_to") and d.assigned_to:
+        resp.assigned_to_name = d.assigned_to.full_name
+    return resp

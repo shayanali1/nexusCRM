@@ -1,5 +1,6 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.exceptions import NotFoundException
@@ -7,23 +8,21 @@ from app.core.permissions import Permission
 from app.modules.auth.dependencies import get_current_user, require_permission
 from app.modules.deals.models import Deal
 from app.modules.deals.repository import DealRepository
-from app.modules.deals.schemas import DealCreate, DealResponse, DealStageMoveRequest, DealUpdate
+from app.modules.deals.schemas import (
+    DealCreate,
+    DealResponse,
+    DealStageMoveRequest,
+    DealUpdate,
+    format_deal_response,
+)
+from app.modules.pipelines.models import Pipeline
+from app.modules.pipelines.repository import PipelineRepository
+from app.modules.pipelines.schemas import PipelineBoardResponse
 from app.modules.users.models import User
 
 router = APIRouter(prefix="/deals", tags=["Deals"])
 
-
-def _to_deal_resp(d: Deal) -> DealResponse:
-    resp = DealResponse.model_validate(d)
-    if d.stage:
-        resp.stage_name = d.stage.name
-    if d.contact:
-        resp.contact_name = d.contact.full_name
-    if d.company:
-        resp.company_name = d.company.name
-    if d.assigned_to:
-        resp.assigned_to_name = d.assigned_to.full_name
-    return resp
+_to_deal_resp = format_deal_response
 
 
 @router.get("", response_model=List[DealResponse])
@@ -55,6 +54,47 @@ async def create_deal(
     deal = await repo.create(req)
     loaded = await repo.get_by_id(deal.id)
     return _to_deal_resp(loaded or deal)
+
+
+@router.get("/board", response_model=PipelineBoardResponse)
+async def get_deals_board(
+    pipeline_id: Optional[str] = Query(None, description="Pipeline ID (defaults to default pipeline)"),
+    assigned_to_id: Optional[str] = Query(None, description="Filter by salesperson"),
+    status: Optional[str] = Query(None, description="Filter by status (OPEN, WON, LOST)"),
+    search: Optional[str] = Query(None, description="Search deal title"),
+    limit_per_stage: int = Query(50, ge=1, le=200, description="Max deals returned per stage"),
+    current_user: User = Depends(require_permission(Permission.DEALS_READ)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve Kanban board representation for deals (defaults to default pipeline if pipeline_id omitted)."""
+    pipe_repo = PipelineRepository(db, current_user.organization_id)
+    target_pipe_id = pipeline_id
+    if not target_pipe_id:
+        def_pipe = (await db.execute(
+            select(Pipeline.id).where(
+                Pipeline.organization_id == current_user.organization_id,
+                Pipeline.is_default.is_(True),
+            )
+        )).scalars().first()
+        if not def_pipe:
+            first_pipe = (await db.execute(
+                select(Pipeline.id).where(
+                    Pipeline.organization_id == current_user.organization_id,
+                ).order_by(Pipeline.created_at.asc())
+            )).scalars().first()
+            if not first_pipe:
+                raise NotFoundException("Pipeline not found.")
+            target_pipe_id = first_pipe
+        else:
+            target_pipe_id = def_pipe
+
+    return await pipe_repo.get_board(
+        pipeline_id=target_pipe_id,
+        assigned_to_id=assigned_to_id,
+        status=status,
+        search=search,
+        limit_per_stage=limit_per_stage,
+    )
 
 
 @router.get("/{deal_id}", response_model=DealResponse)
