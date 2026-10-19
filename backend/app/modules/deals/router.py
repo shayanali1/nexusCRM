@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import select
@@ -18,6 +19,8 @@ from app.modules.deals.schemas import (
 from app.modules.pipelines.models import Pipeline
 from app.modules.pipelines.repository import PipelineRepository
 from app.modules.pipelines.schemas import PipelineBoardResponse
+from app.modules.reports.schemas import PipelineSummaryResponse, WonLostPerformanceResponse
+from app.modules.reports.service import ReportsService
 from app.modules.users.models import User
 
 router = APIRouter(prefix="/deals", tags=["Deals"])
@@ -110,6 +113,44 @@ async def get_deals_board(
         status=status,
         search=search,
         limit_per_stage=limit_per_stage,
+    )
+
+
+@router.get("/pipeline-summary", response_model=PipelineSummaryResponse)
+async def get_deals_pipeline_summary(
+    pipeline_id: Optional[str] = Query(None, description="Pipeline ID (defaults to default pipeline)"),
+    assigned_to_id: Optional[str] = Query(None, description="Filter by salesperson"),
+    start_date: Optional[datetime] = Query(None, description="Filter start date"),
+    end_date: Optional[datetime] = Query(None, description="Filter end date"),
+    current_user: User = Depends(require_permission(Permission.DEALS_READ)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve pipeline summary with stage breakdowns and weighted revenue forecasts."""
+    service = ReportsService(db, current_user.organization_id)
+    return await service.get_pipeline_summary(
+        pipeline_id=pipeline_id,
+        assigned_to_id=assigned_to_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
+@router.get("/won-lost", response_model=WonLostPerformanceResponse)
+async def get_deals_won_lost_performance(
+    pipeline_id: Optional[str] = Query(None, description="Filter by pipeline ID"),
+    assigned_to_id: Optional[str] = Query(None, description="Filter by salesperson"),
+    start_date: Optional[datetime] = Query(None, description="Filter start date"),
+    end_date: Optional[datetime] = Query(None, description="Filter end date"),
+    current_user: User = Depends(require_permission(Permission.DEALS_READ)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve won/lost performance metrics and win rate for closed deals in requested date range."""
+    service = ReportsService(db, current_user.organization_id)
+    return await service.get_won_lost_performance(
+        pipeline_id=pipeline_id,
+        assigned_to_id=assigned_to_id,
+        start_date=start_date,
+        end_date=end_date,
     )
 
 
