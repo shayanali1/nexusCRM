@@ -12,6 +12,16 @@ from app.modules.pipelines.models import Pipeline, PipelineStage
 from app.modules.users.models import User
 
 
+DEALS_SORT_FIELDS = {
+    "title": Deal.title,
+    "value": Deal.value,
+    "status": Deal.status,
+    "created_at": Deal.created_at,
+    "updated_at": Deal.updated_at,
+    "expected_close_date": Deal.expected_close_date,
+}
+
+
 class DealRepository:
     def __init__(self, db: AsyncSession, organization_id: str):
         self.db = db
@@ -24,8 +34,12 @@ class DealRepository:
         status: Optional[str] = None,
         assigned_to_id: Optional[str] = None,
         search: Optional[str] = None,
-        limit: int = 200,
+        limit: int = 100,
         offset: int = 0,
+        contact_id: Optional[str] = None,
+        company_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> List[Deal]:
         stmt = (
             select(Deal)
@@ -36,19 +50,47 @@ class DealRepository:
                 selectinload(Deal.company),
                 selectinload(Deal.assigned_to),
             )
-            .order_by(Deal.created_at.desc())
         )
-        if pipeline_id:
-            stmt = stmt.where(Deal.pipeline_id == pipeline_id)
-        if stage_id:
-            stmt = stmt.where(Deal.stage_id == stage_id)
-        if status:
-            stmt = stmt.where(Deal.status == status.upper())
-        if assigned_to_id:
-            stmt = stmt.where(Deal.assigned_to_id == assigned_to_id)
-        if search:
-            search_pattern = f"%{search}%"
+        if pipeline_id and pipeline_id.strip():
+            stmt = stmt.where(Deal.pipeline_id == pipeline_id.strip())
+        if stage_id and stage_id.strip():
+            stmt = stmt.where(Deal.stage_id == stage_id.strip())
+        if status and status.strip():
+            clean_status = status.strip().upper()
+            if clean_status not in ("OPEN", "WON", "LOST"):
+                raise BadRequestException("Invalid deal status. Must be one of: OPEN, WON, LOST.")
+            stmt = stmt.where(Deal.status == clean_status)
+        if assigned_to_id and assigned_to_id.strip():
+            stmt = stmt.where(Deal.assigned_to_id == assigned_to_id.strip())
+        if contact_id and contact_id.strip():
+            stmt = stmt.where(Deal.contact_id == contact_id.strip())
+        if company_id and company_id.strip():
+            stmt = stmt.where(Deal.company_id == company_id.strip())
+        if search and search.strip():
+            search_pattern = f"%{search.strip()}%"
             stmt = stmt.where(Deal.title.ilike(search_pattern))
+
+        clean_sort_by = sort_by.strip().lower() if sort_by and sort_by.strip() else None
+        clean_sort_order = sort_order.strip().lower() if sort_order and sort_order.strip() else None
+
+        if clean_sort_order is not None and clean_sort_order not in ("asc", "desc"):
+            raise BadRequestException("Invalid sort order. Must be 'asc' or 'desc'.")
+
+        if clean_sort_by is not None:
+            if clean_sort_by not in DEALS_SORT_FIELDS:
+                allowed = ", ".join(sorted(DEALS_SORT_FIELDS.keys()))
+                raise BadRequestException(f"Invalid sort field '{clean_sort_by}'. Allowed fields: {allowed}")
+
+            direction = clean_sort_order if clean_sort_order else ("desc" if clean_sort_by in ("created_at", "updated_at") else "asc")
+            col = DEALS_SORT_FIELDS[clean_sort_by]
+            stmt = stmt.order_by(col.desc() if direction == "desc" else col.asc(), Deal.id.asc())
+        elif clean_sort_order is not None:
+            if clean_sort_order == "desc":
+                stmt = stmt.order_by(Deal.created_at.desc(), Deal.id.asc())
+            else:
+                stmt = stmt.order_by(Deal.created_at.asc(), Deal.id.asc())
+        else:
+            stmt = stmt.order_by(Deal.created_at.desc(), Deal.id.asc())
 
         stmt = stmt.offset(offset).limit(limit)
         result = await self.db.execute(stmt)

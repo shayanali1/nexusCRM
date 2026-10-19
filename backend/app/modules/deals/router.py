@@ -31,15 +31,31 @@ async def list_deals(
     stage_id: Optional[str] = Query(None, description="Filter by stage"),
     status: Optional[str] = Query(None, description="Filter by status (OPEN, WON, LOST)"),
     assigned_to_id: Optional[str] = Query(None, description="Filter by salesperson"),
+    contact_id: Optional[str] = Query(None, description="Filter by contact"),
+    company_id: Optional[str] = Query(None, description="Filter by company"),
     search: Optional[str] = Query(None, description="Search deal title"),
-    limit: int = Query(200, ge=1, le=500),
+    sort_by: Optional[str] = Query(None, description="Field to sort by"),
+    sort_order: Optional[str] = Query(None, description="Sort direction ('asc' or 'desc')"),
+    limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(require_permission(Permission.DEALS_READ)),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all pipeline deals with filter options."""
+    """List all pipeline deals with filter, sort, and pagination options."""
     repo = DealRepository(db, current_user.organization_id)
-    deals = await repo.list_all(pipeline_id, stage_id, status, assigned_to_id, search, limit, offset)
+    deals = await repo.list_all(
+        pipeline_id=pipeline_id,
+        stage_id=stage_id,
+        status=status,
+        assigned_to_id=assigned_to_id,
+        search=search,
+        limit=limit,
+        offset=offset,
+        contact_id=contact_id,
+        company_id=company_id,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
     return [_to_deal_resp(d) for d in deals]
 
 
