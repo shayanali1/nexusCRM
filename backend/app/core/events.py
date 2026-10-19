@@ -20,6 +20,8 @@ class CRMEventType:
     ACTIVITY_CREATED = "activity.created"
     DEAL_STAGE_CHANGED = "deal.stage_changed"
     DEAL_WON = "deal.won"
+    DEAL_LOST = "deal.lost"
+    DEAL_OVERDUE = "deal.overdue"
     TASK_CREATED = "task.created"
     TASK_OVERDUE = "task.overdue"
     PROPOSAL_SENT = "proposal.sent"

@@ -17,7 +17,7 @@ from app.core.logging import logger
 from app.modules.activities.models import Activity, ActivityType
 from app.modules.companies.models import Company
 from app.modules.contacts.models import Contact
-from app.modules.deals.models import Deal
+from app.modules.deals.models import Deal, DealStatus
 from app.modules.leads.models import Lead, LeadStatus
 from app.modules.notifications.models import Notification
 from app.modules.tasks.models import Task, TaskPriority, TaskStatus, TaskType
@@ -256,6 +256,76 @@ async def handle_deal_won(event: CRMEvent, db: AsyncSession) -> None:
     await db.commit()
 
 
+async def handle_deal_lost(event: CRMEvent, db: AsyncSession) -> None:
+    """Deal Lost Workflow.
+
+    1. Idempotently log an Activity timeline entry recording the deal loss and reason.
+    2. Idempotently notify the assigned sales rep.
+    """
+    logger.info(f"Running Deal Lost Workflow for deal {event.entity_id} in org {event.organization_id}")
+    stmt = select(Deal).where(Deal.id == event.entity_id, Deal.organization_id == event.organization_id)
+    result = await db.execute(stmt)
+    deal = result.scalar_one_or_none()
+    if not deal:
+        logger.warning(f"Deal {event.entity_id} not found during deal.lost workflow")
+        return
+
+    now = datetime.now(timezone.utc)
+
+    # 1. Activity entry for audit timeline (Idempotency check: don't create duplicate activity)
+    act_title = f"Deal Lost: {deal.title}"
+    existing_act = (await db.execute(
+        select(Activity).where(
+            Activity.organization_id == event.organization_id,
+            Activity.deal_id == deal.id,
+            Activity.title == act_title,
+        )
+    )).scalars().first()
+
+    if not existing_act:
+        reason_text = f" Reason: {deal.lost_reason}" if deal.lost_reason else ""
+        act = Activity(
+            organization_id=event.organization_id,
+            deal_id=deal.id,
+            contact_id=deal.contact_id,
+            user_id=event.actor_id or deal.assigned_to_id,
+            activity_type=ActivityType.STAGE_CHANGE.value,
+            title=act_title,
+            description=f"Deal marked as LOST with contract value {deal.value} {deal.currency}.{reason_text}",
+            performed_at=now,
+            extra_metadata={
+                "deal_id": deal.id,
+                "value": deal.value,
+                "currency": deal.currency,
+                "lost_reason": deal.lost_reason,
+            },
+        )
+        db.add(act)
+
+    # 2. Notification to assigned rep
+    if deal.assigned_to_id:
+        notif_title = f"Deal Lost: {deal.title}"
+        existing_notif = (await db.execute(
+            select(Notification).where(
+                Notification.organization_id == event.organization_id,
+                Notification.user_id == deal.assigned_to_id,
+                Notification.title == notif_title,
+            )
+        )).scalars().first()
+        if not existing_notif:
+            notif = Notification(
+                organization_id=event.organization_id,
+                user_id=deal.assigned_to_id,
+                title=notif_title,
+                message=f"Deal '{deal.title}' was marked as lost." + (f" Reason: {deal.lost_reason}" if deal.lost_reason else ""),
+                notification_type="DEAL_LOST",
+                link=f"/deals/{deal.id}",
+            )
+            db.add(notif)
+
+    await db.commit()
+
+
 async def handle_proposal_sent(event: CRMEvent, db: AsyncSession) -> None:
     """Proposal Follow-Up Workflow.
 
@@ -424,10 +494,105 @@ async def escalate_overdue_tasks(db: AsyncSession, organization_id: str) -> List
     return escalated
 
 
+async def check_and_process_overdue_deals(db: AsyncSession, organization_id: str) -> List[Deal]:
+    """Scan and process open deals whose expected close date has passed.
+
+    1. Idempotently creates a follow-up task 'Review Overdue Deal: <title>' for assigned owner.
+    2. Sends notification to assigned owner.
+    3. Dispatches deal.overdue CRM event.
+    """
+    now = datetime.now(timezone.utc)
+    stmt = (
+        select(Deal)
+        .where(
+            Deal.organization_id == organization_id,
+            Deal.status == DealStatus.OPEN.value,
+            Deal.expected_close_date.is_not(None),
+            Deal.expected_close_date < now,
+        )
+        .limit(200)
+    )
+    result = await db.execute(stmt)
+    overdue_deals = result.scalars().all()
+
+    processed_deals: List[Deal] = []
+    for deal in overdue_deals:
+        followup_title = f"Review Overdue Deal: {deal.title}"
+
+        # Idempotency check: do not create duplicate task if an open task already exists
+        existing_task = (await db.execute(
+            select(Task).where(
+                Task.organization_id == organization_id,
+                Task.deal_id == deal.id,
+                Task.title == followup_title,
+                Task.status.in_([TaskStatus.PENDING.value, TaskStatus.IN_PROGRESS.value]),
+            )
+        )).scalars().first()
+
+        if not existing_task:
+            task = Task(
+                organization_id=organization_id,
+                deal_id=deal.id,
+                contact_id=deal.contact_id,
+                assigned_to_id=deal.assigned_to_id,
+                title=followup_title,
+                description=(
+                    f"Deal '{deal.title}' passed its expected close date "
+                    f"({deal.expected_close_date.strftime('%Y-%m-%d')}). "
+                    f"Review pipeline status and update expected close date or stage outcome."
+                ),
+                task_type=TaskType.FOLLOW_UP.value,
+                priority=TaskPriority.HIGH.value,
+                status=TaskStatus.PENDING.value,
+                due_date=now + timedelta(hours=24),
+                extra_metadata={"automated": True, "workflow": "deal_overdue"},
+            )
+            db.add(task)
+            processed_deals.append(deal)
+
+            # Notification to assigned user
+            if deal.assigned_to_id:
+                notif = Notification(
+                    organization_id=organization_id,
+                    user_id=deal.assigned_to_id,
+                    title="Deal Overdue Alert",
+                    message=f"Deal '{deal.title}' has passed its expected close date. A review task has been assigned.",
+                    notification_type="DEAL_OVERDUE",
+                    link=f"/deals/{deal.id}",
+                )
+                db.add(notif)
+
+    if processed_deals:
+        await db.commit()
+        for d in processed_deals:
+            await event_dispatcher.dispatch(
+                CRMEvent(
+                    event_name=CRMEventType.DEAL_OVERDUE,
+                    organization_id=organization_id,
+                    entity_type="deal",
+                    entity_id=d.id,
+                    payload={
+                        "deal_id": d.id,
+                        "title": d.title,
+                        "value": d.value,
+                        "expected_close_date": d.expected_close_date.isoformat() if d.expected_close_date else None,
+                        "assigned_to_id": d.assigned_to_id,
+                        "stage_id": d.stage_id,
+                        "pipeline_id": d.pipeline_id,
+                    },
+                ),
+                db,
+            )
+
+    logger.info(f"Processed {len(processed_deals)} overdue deals in org {organization_id}")
+    return processed_deals
+
+
 def register_standard_workflows():
     """Register built-in CRM operational workflows with the global event dispatcher."""
     event_dispatcher.subscribe(CRMEventType.LEAD_CREATED, handle_lead_created)
     event_dispatcher.subscribe(CRMEventType.DEAL_WON, handle_deal_won)
+    event_dispatcher.subscribe(CRMEventType.DEAL_LOST, handle_deal_lost)
     event_dispatcher.subscribe(CRMEventType.PROPOSAL_SENT, handle_proposal_sent)
     logger.info("NexusCRM standard operational workflows successfully registered.")
 

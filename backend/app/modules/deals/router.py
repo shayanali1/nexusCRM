@@ -140,11 +140,50 @@ async def update_deal(
     if not deal:
         raise NotFoundException("Deal not found.")
     old_status = deal.status
+    old_stage_id = deal.stage_id
     updated = await repo.update(deal, req)
     loaded = await repo.get_by_id(updated.id)
 
     from app.core.events import CRMEvent, CRMEventType, event_dispatcher
     from app.modules.deals.models import DealStatus
+
+    deal_payload = {
+        "deal_id": updated.id,
+        "title": updated.title,
+        "value": updated.value,
+        "status": updated.status,
+        "stage_id": updated.stage_id,
+        "old_stage_id": old_stage_id,
+        "pipeline_id": updated.pipeline_id,
+        "assigned_to_id": updated.assigned_to_id,
+        "contact_id": updated.contact_id,
+        "company_id": updated.company_id,
+    }
+
+    if updated.stage_id != old_stage_id:
+        await event_dispatcher.dispatch(
+            CRMEvent(
+                event_name=CRMEventType.DEAL_STAGE_CHANGED,
+                organization_id=current_user.organization_id,
+                entity_type="deal",
+                entity_id=updated.id,
+                actor_id=current_user.id,
+                payload=deal_payload,
+            ),
+            db,
+        )
+        if loaded and loaded.stage and "proposal" in loaded.stage.name.lower():
+            await event_dispatcher.dispatch(
+                CRMEvent(
+                    event_name=CRMEventType.PROPOSAL_SENT,
+                    organization_id=current_user.organization_id,
+                    entity_type="deal",
+                    entity_id=updated.id,
+                    actor_id=current_user.id,
+                    payload=deal_payload,
+                ),
+                db,
+            )
 
     if updated.status == DealStatus.WON.value and old_status != DealStatus.WON.value:
         await event_dispatcher.dispatch(
@@ -154,7 +193,22 @@ async def update_deal(
                 entity_type="deal",
                 entity_id=updated.id,
                 actor_id=current_user.id,
-                payload={"deal_id": updated.id, "title": updated.title, "value": updated.value},
+                payload=deal_payload,
+            ),
+            db,
+        )
+
+    if updated.status == DealStatus.LOST.value and old_status != DealStatus.LOST.value:
+        lost_payload = dict(deal_payload)
+        lost_payload["lost_reason"] = updated.lost_reason
+        await event_dispatcher.dispatch(
+            CRMEvent(
+                event_name=CRMEventType.DEAL_LOST,
+                organization_id=current_user.organization_id,
+                entity_type="deal",
+                entity_id=updated.id,
+                actor_id=current_user.id,
+                payload=lost_payload,
             ),
             db,
         )
@@ -175,11 +229,25 @@ async def move_deal_stage(
     if not deal:
         raise NotFoundException("Deal not found.")
     old_status = deal.status
+    old_stage_id = deal.stage_id
     updated = await repo.move_stage(deal, req)
     loaded = await repo.get_by_id(updated.id)
 
     from app.core.events import CRMEvent, CRMEventType, event_dispatcher
     from app.modules.deals.models import DealStatus
+
+    deal_payload = {
+        "deal_id": updated.id,
+        "title": updated.title,
+        "value": updated.value,
+        "status": updated.status,
+        "stage_id": updated.stage_id,
+        "old_stage_id": old_stage_id,
+        "pipeline_id": updated.pipeline_id,
+        "assigned_to_id": updated.assigned_to_id,
+        "contact_id": updated.contact_id,
+        "company_id": updated.company_id,
+    }
 
     await event_dispatcher.dispatch(
         CRMEvent(
@@ -188,7 +256,7 @@ async def move_deal_stage(
             entity_type="deal",
             entity_id=updated.id,
             actor_id=current_user.id,
-            payload={"deal_id": updated.id, "stage_id": updated.stage_id, "status": updated.status},
+            payload=deal_payload,
         ),
         db,
     )
@@ -201,7 +269,7 @@ async def move_deal_stage(
                 entity_type="deal",
                 entity_id=updated.id,
                 actor_id=current_user.id,
-                payload={"deal_id": updated.id, "stage_id": updated.stage_id, "title": updated.title},
+                payload=deal_payload,
             ),
             db,
         )
@@ -214,7 +282,22 @@ async def move_deal_stage(
                 entity_type="deal",
                 entity_id=updated.id,
                 actor_id=current_user.id,
-                payload={"deal_id": updated.id, "title": updated.title, "value": updated.value},
+                payload=deal_payload,
+            ),
+            db,
+        )
+
+    if updated.status == DealStatus.LOST.value and old_status != DealStatus.LOST.value:
+        lost_payload = dict(deal_payload)
+        lost_payload["lost_reason"] = updated.lost_reason
+        await event_dispatcher.dispatch(
+            CRMEvent(
+                event_name=CRMEventType.DEAL_LOST,
+                organization_id=current_user.organization_id,
+                entity_type="deal",
+                entity_id=updated.id,
+                actor_id=current_user.id,
+                payload=lost_payload,
             ),
             db,
         )

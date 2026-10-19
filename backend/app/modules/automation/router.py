@@ -47,6 +47,16 @@ async def update_automation_rule(
     rule = await service.update_rule(rule_id, req)
     return AutomationRuleResponse.model_validate(rule)
 
+@router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_automation_rule(
+    rule_id: str,
+    current_user: User = Depends(require_permission(Permission.AUTOMATION_MANAGE)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an automation rule."""
+    service = AutomationService(db, current_user.organization_id)
+    await service.delete_rule(rule_id)
+
 
 @router.post("/test-trigger")
 async def test_trigger_event(

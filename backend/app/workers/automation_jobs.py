@@ -121,3 +121,66 @@ def scan_overdue_tasks_periodic() -> Dict[str, Any]:
     """Periodic Celery task scanning active organizations to escalate overdue tasks."""
     logger.info("Executing periodic overdue task escalation scan.")
     return run_async_in_worker(async_scan_and_escalate_overdue_tasks())
+
+
+async def async_scan_overdue_deals(
+    session: Optional[AsyncSession] = None,
+) -> Dict[str, Any]:
+    """Scan all active tenant organizations and process overdue deals with isolated failure boundaries."""
+    from sqlalchemy import select
+    from app.modules.automation import workflows
+    from app.modules.organizations.models import Organization
+
+    async def _execute(db: AsyncSession) -> Dict[str, Any]:
+        stmt = select(Organization.id).where(Organization.is_active.is_(True))
+        org_ids = (await db.execute(stmt)).scalars().all()
+
+        results: Dict[str, Any] = {}
+        total_processed = 0
+
+        for org_id in org_ids:
+            try:
+                processed = await workflows.check_and_process_overdue_deals(db, org_id)
+                count = len(processed)
+                results[org_id] = {
+                    "status": "success",
+                    "processed_count": count,
+                }
+                total_processed += count
+            except Exception as exc:
+                await db.rollback()
+                logger.error(
+                    f"Error processing overdue deals for organization {org_id}: {exc}",
+                    exc_info=True,
+                )
+                results[org_id] = {
+                    "status": "failed",
+                    "error": str(exc),
+                }
+
+        logger.info(
+            f"Overdue deal scan completed: {len(org_ids)} active orgs scanned, {total_processed} deals processed."
+        )
+        return {
+            "organizations_processed": len(org_ids),
+            "total_processed": total_processed,
+            "details": results,
+        }
+
+    if session:
+        return await _execute(session)
+    else:
+        async with AsyncSessionLocal() as db:
+            return await _execute(db)
+
+
+@celery_app.task(
+    name="app.workers.automation_jobs.scan_overdue_deals_periodic",
+    max_retries=3,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+)
+def scan_overdue_deals_periodic() -> Dict[str, Any]:
+    """Periodic Celery task scanning active organizations to process overdue deals."""
+    logger.info("Executing periodic overdue deal processing scan.")
+    return run_async_in_worker(async_scan_overdue_deals())

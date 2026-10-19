@@ -28,6 +28,10 @@ celery_app.conf.update(
             "task": "app.workers.automation_jobs.scan_overdue_tasks_periodic",
             "schedule": 3600.0,  # Run every hour (3600 seconds)
         },
+        "scan-overdue-deals-hourly": {
+            "task": "app.workers.automation_jobs.scan_overdue_deals_periodic",
+            "schedule": 3600.0,  # Run every hour (3600 seconds)
+        },
     },
 )
 
