@@ -33,12 +33,13 @@ def _to_task_resp(t: Task) -> TaskResponse:
 
 @router.get("/metrics", response_model=TaskSummaryMetrics)
 async def get_task_metrics(
+    assigned_to_id: Optional[str] = Query(None, description="Filter metrics by assigned user"),
     current_user: User = Depends(require_permission(Permission.TASKS_READ)),
     db: AsyncSession = Depends(get_db),
 ):
     """Retrieve follow-up task counts (overdue, due today, upcoming)."""
     repo = TaskRepository(db, current_user.organization_id)
-    return await repo.get_metrics()
+    return await repo.get_metrics(assigned_to_id=assigned_to_id)
 
 
 @router.post("/escalate-overdue")
@@ -65,6 +66,11 @@ async def list_tasks(
     contact_id: Optional[str] = Query(None, description="Filter by contact"),
     deal_id: Optional[str] = Query(None, description="Filter by deal"),
     filter_type: Optional[str] = Query(None, description="Filter by overdue, today, or upcoming"),
+    search: Optional[str] = Query(None, description="Search term across title and description"),
+    sort_by: Optional[str] = Query(None, description="Field to sort by (due_date, priority, status, created_at, title)"),
+    sort_order: Optional[str] = Query(None, description="Sort direction (asc, desc)"),
+    start_date: Optional[datetime] = Query(None, description="Filter tasks due on or after this ISO datetime"),
+    end_date: Optional[datetime] = Query(None, description="Filter tasks due on or before this ISO datetime"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(require_permission(Permission.TASKS_READ)),
@@ -80,6 +86,11 @@ async def list_tasks(
         contact_id=contact_id,
         deal_id=deal_id,
         filter_type=filter_type,
+        search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        start_date=start_date,
+        end_date=end_date,
         limit=limit,
         offset=offset,
     )
@@ -97,6 +108,20 @@ async def create_task(
     task = await repo.create(req, created_by_id=current_user.id)
     loaded = await repo.get_by_id(task.id)
     return _to_task_resp(loaded or task)
+
+
+@router.get("/{task_id}", response_model=TaskResponse)
+async def get_task(
+    task_id: str,
+    current_user: User = Depends(require_permission(Permission.TASKS_READ)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve a single task by ID."""
+    repo = TaskRepository(db, current_user.organization_id)
+    task = await repo.get_by_id(task_id)
+    if not task:
+        raise NotFoundException("Task not found.")
+    return _to_task_resp(task)
 
 
 @router.patch("/{task_id}", response_model=TaskResponse)

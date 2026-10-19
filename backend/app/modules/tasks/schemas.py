@@ -30,6 +30,9 @@ class TaskUpdate(BaseModel):
     due_date: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     assigned_to_id: Optional[str] = None
+    lead_id: Optional[str] = None
+    contact_id: Optional[str] = None
+    deal_id: Optional[str] = None
 
 
 class TaskResponse(TaskBase):
