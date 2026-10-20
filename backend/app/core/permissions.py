@@ -42,6 +42,8 @@ class Permission(str, Enum):
     TASKS_DELETE = "tasks:delete"
     ACTIVITIES_READ = "activities:read"
     ACTIVITIES_CREATE = "activities:create"
+    ACTIVITIES_UPDATE = "activities:update"
+    ACTIVITIES_DELETE = "activities:delete"
 
     # Automations & Reports
     AUTOMATION_READ = "automation:read"
@@ -89,6 +91,8 @@ ROLE_PERMISSIONS: dict[RoleEnum, Set[Permission]] = {
         Permission.TASKS_DELETE,
         Permission.ACTIVITIES_READ,
         Permission.ACTIVITIES_CREATE,
+        Permission.ACTIVITIES_UPDATE,
+        Permission.ACTIVITIES_DELETE,
         Permission.AUTOMATION_READ,
         Permission.AUTOMATION_MANAGE,
         Permission.REPORTS_READ,
@@ -114,6 +118,7 @@ ROLE_PERMISSIONS: dict[RoleEnum, Set[Permission]] = {
         Permission.TASKS_UPDATE,
         Permission.ACTIVITIES_READ,
         Permission.ACTIVITIES_CREATE,
+        Permission.ACTIVITIES_UPDATE,
         Permission.REPORTS_READ,
         Permission.AI_USE,
     },
