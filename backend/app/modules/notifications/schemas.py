@@ -16,3 +16,11 @@ class NotificationResponse(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UnreadCountResponse(BaseModel):
+    unread_count: int
+
+
+class NotificationReadUpdate(BaseModel):
+    is_read: bool = True
