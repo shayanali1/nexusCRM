@@ -13,7 +13,7 @@ from app.modules.automation.models import AutomationAction, AutomationRule
 from app.modules.ai.models import AIInsight, AIJob
 from app.modules.notifications.models import Notification
 from app.modules.imports.models import ImportJob, ImportRow
-from app.modules.integrations.models import Integration
+from app.modules.integrations.models import Integration, WebhookDelivery, WebhookSubscription
 from app.modules.audit.models import AuditLog
 
 __all__ = [
@@ -38,5 +38,7 @@ __all__ = [
     "ImportJob",
     "ImportRow",
     "Integration",
+    "WebhookSubscription",
+    "WebhookDelivery",
     "AuditLog",
 ]

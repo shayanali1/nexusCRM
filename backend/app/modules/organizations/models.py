@@ -31,3 +31,5 @@ class Organization(Base, TimestampMixin):
     ai_insights = relationship("AIInsight", back_populates="organization", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="organization", cascade="all, delete-orphan")
     integrations = relationship("Integration", back_populates="organization", cascade="all, delete-orphan")
+    webhook_subscriptions = relationship("WebhookSubscription", back_populates="organization", cascade="all, delete-orphan")
+    webhook_deliveries = relationship("WebhookDelivery", back_populates="organization", cascade="all, delete-orphan")
