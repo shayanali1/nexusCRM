@@ -63,6 +63,7 @@ class Permission(str, Enum):
     TEAM_MANAGE = "team:manage"
     SETTINGS_MANAGE = "settings:manage"
     IMPORTS_MANAGE = "imports:manage"
+    AUDIT_READ = "audit:read"
 
 
 # Role to Permissions matrix
@@ -107,6 +108,7 @@ ROLE_PERMISSIONS: dict[RoleEnum, Set[Permission]] = {
         Permission.AI_USE,
         Permission.TEAM_READ,
         Permission.IMPORTS_MANAGE,
+        Permission.AUDIT_READ,
     },
     RoleEnum.MEMBER: {
         Permission.LEADS_READ,

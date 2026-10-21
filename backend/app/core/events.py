@@ -17,7 +17,9 @@ from app.core.logging import logger
 class CRMEventType:
     LEAD_CREATED = "lead.created"
     LEAD_ASSIGNED = "lead.assigned"
+    LEAD_CONVERTED = "lead.converted"
     ACTIVITY_CREATED = "activity.created"
+    DEAL_CREATED = "deal.created"
     DEAL_STAGE_CHANGED = "deal.stage_changed"
     DEAL_WON = "deal.won"
     DEAL_LOST = "deal.lost"

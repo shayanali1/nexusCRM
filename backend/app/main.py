@@ -13,6 +13,8 @@ import app.models  # Ensure all SQLAlchemy models are registered
 from app.modules.activities.router import router as activities_router
 from app.modules.ai.factory import get_ai_provider
 from app.modules.ai.router import router as ai_router
+from app.modules.audit.router import router as audit_router
+import app.modules.audit.subscribers  # Ensure audit event subscribers are loaded and registered
 from app.modules.auth.router import router as auth_router
 from app.modules.automation.router import router as automation_router
 import app.modules.automation.workflows  # Ensure event subscribers are loaded and registered
@@ -40,9 +42,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Redis initialization notice: {e}")
 
-    # Register CRM built-in operational event workflows
+    # Register CRM built-in operational event workflows & audit subscribers
     from app.modules.automation.workflows import register_standard_workflows
     register_standard_workflows()
+    from app.modules.audit.subscribers import register_audit_subscribers
+    register_audit_subscribers()
 
     # Log active AI provider
     ai_provider = get_ai_provider()
@@ -158,6 +162,7 @@ api_v1_router.include_router(deals_router)
 api_v1_router.include_router(tasks_router)
 api_v1_router.include_router(activities_router)
 api_v1_router.include_router(calendar_router)
+api_v1_router.include_router(audit_router)
 api_v1_router.include_router(automation_router)
 api_v1_router.include_router(imports_router)
 api_v1_router.include_router(ai_router)
