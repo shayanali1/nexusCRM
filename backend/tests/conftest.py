@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 os.environ["APP_ENV"] = "test"
 os.environ["AI_PROVIDER"] = "mock"
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///file:testdb?mode=memory&cache=shared&uri=true"
+os.environ.setdefault("INTEGRATION_ENCRYPTION_KEY", "bmV4dXNfY3JtX3Rlc3RfZmVybmV0X2tleV8zMmJ5dGU=")
 
 from app.core.database import Base, get_db
 from app.core.security import create_access_token, hash_password

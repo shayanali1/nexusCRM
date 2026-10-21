@@ -1,4 +1,5 @@
 from sqlalchemy import Boolean, Column, Index, JSON, String
+from sqlalchemy.orm import relationship
 from app.core.database import Base, TenantMixin, TimestampMixin, generate_uuid
 
 
@@ -15,3 +16,6 @@ class Integration(Base, TimestampMixin, TenantMixin):
     __table_args__ = (
         Index("ix_integrations_org_provider", "organization_id", "provider", unique=True),
     )
+
+    # Relationships
+    organization = relationship("Organization", back_populates="integrations")

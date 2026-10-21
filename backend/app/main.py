@@ -23,6 +23,7 @@ from app.modules.companies.router import router as companies_router
 from app.modules.contacts.router import router as contacts_router
 from app.modules.deals.router import router as deals_router
 from app.modules.imports.router import router as imports_router
+from app.modules.integrations.router import router as integrations_router
 from app.modules.leads.router import router as leads_router
 from app.modules.notifications.router import router as notifications_router
 from app.modules.organizations.router import router as organizations_router
@@ -168,5 +169,6 @@ api_v1_router.include_router(imports_router)
 api_v1_router.include_router(ai_router)
 api_v1_router.include_router(notifications_router)
 api_v1_router.include_router(reports_router)
+api_v1_router.include_router(integrations_router)
 
 app.include_router(api_v1_router)

@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: Optional[str] = None
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/v1/calendar/oauth2callback"
 
+    # Integration Encryption
+    INTEGRATION_ENCRYPTION_KEY: Optional[str] = None
+
     # CORS
     CORS_ORIGINS: Union[List[str], str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 

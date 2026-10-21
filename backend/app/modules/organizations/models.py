@@ -30,3 +30,4 @@ class Organization(Base, TimestampMixin):
     notifications = relationship("Notification", back_populates="organization", cascade="all, delete-orphan")
     ai_insights = relationship("AIInsight", back_populates="organization", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="organization", cascade="all, delete-orphan")
+    integrations = relationship("Integration", back_populates="organization", cascade="all, delete-orphan")

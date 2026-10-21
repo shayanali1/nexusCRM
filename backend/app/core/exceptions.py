@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from app.core.logging import logger
@@ -93,6 +94,32 @@ class AIProviderException(AppException):
         )
 
 
+def _sanitize_validation_errors(raw_errors: Any) -> Any:
+    """Sanitize sensitive input fields (e.g. body.credentials) from validation errors."""
+    if not isinstance(raw_errors, list):
+        return raw_errors
+
+    sanitized = []
+    for err in raw_errors:
+        if isinstance(err, dict):
+            err_copy = dict(err)
+            loc = err_copy.get("loc", ())
+            # Narrowly target credentials field errors (e.g. ('body', 'credentials'))
+            if any(str(part).lower() == "credentials" for part in loc):
+                if "input" in err_copy:
+                    err_copy["input"] = "[REDACTED]"
+                if "ctx" in err_copy and isinstance(err_copy["ctx"], dict):
+                    ctx_copy = dict(err_copy["ctx"])
+                    for k in ("error", "input"):
+                        if k in ctx_copy:
+                            ctx_copy[k] = "[REDACTED]"
+                    err_copy["ctx"] = ctx_copy
+            sanitized.append(err_copy)
+        else:
+            sanitized.append(err)
+    return sanitized
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register uniform JSON exception handlers for the FastAPI application."""
 
@@ -116,7 +143,8 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
-        logger.info(f"Validation error on {request.method} {request.url.path}: {exc.errors()}")
+        sanitized_details = _sanitize_validation_errors(jsonable_encoder(exc.errors()))
+        logger.info(f"Validation error on {request.method} {request.url.path}: {sanitized_details}")
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={
@@ -124,7 +152,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "error": {
                     "code": "VALIDATION_ERROR",
                     "message": "Request validation failed",
-                    "details": exc.errors(),
+                    "details": sanitized_details,
                 },
             },
         )
